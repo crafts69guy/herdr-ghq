@@ -84,6 +84,14 @@ C_BB="$(sgrf "$(theme_color blue)" 34)"
 C_GL="$(sgrf "$(theme_color peach)" 33)"
 C_GIT="$(sgrf "$SUB" 90)"
 C_WS="$(sgrf "$A" 36)"
+# Footer key colors (a colorful command bar).
+C_A="$(sgrf "$A" 36)"
+C_G="$(sgrf "$(theme_color green)" 32)"
+C_Y="$(sgrf "$(theme_color yellow)" 33)"
+C_B="$(sgrf "$(theme_color blue)" 34)"
+C_M="$(sgrf "$(theme_color mauve)" 35)"
+C_P="$(sgrf "$(theme_color peach)" 33)"
+C_RD="$(sgrf "$(theme_color red)" 31)"
 
 state_color() {
   case "$1" in
@@ -159,29 +167,36 @@ if [[ "$menu_transparent" == "false" ]]; then
   SURF="${SURF:-#23282A}"
 fi
 
-header=$'\033[2m↵ open/focus   ^t tab   ^s split   ^o cd   ^w workspace\n^g git   ^u update   ^x remove   ⌥↵ clone\033[0m'
+# Full-width colorful command bar (fzf footer). Each key gets its own hue and a
+# dim separator between groups.
+fk() { printf '%s%s%s %s%s%s' "$1" "$2" "$R" "$C_TXT" "$3" "$R"; }
+SEP="  ${C_GIT}│${R}  "
+footer=" $(fk "$C_A" '↵' 'open')${SEP}$(fk "$C_G" '^t' 'tab')${SEP}$(fk "$C_Y" '^s' 'split')${SEP}$(fk "$C_B" '^o' 'cd')${SEP}$(fk "$C_M" '^w' 'workspace')${SEP}$(fk "$C_P" '^g' 'git')${SEP}$(fk "$C_A" '^u' 'update')${SEP}$(fk "$C_RD" '^x' 'remove')${SEP}$(fk "$C_M" '⌥↵' 'clone') "
 
+# Layout mirrors codediff.nvim: a Search input box on top, a Results list box
+# below, and a Preview box on the right — no outer wrapper border.
 fzf_args=(
-  --ansi --reverse --no-multi --cycle
+  --ansi --layout=reverse --no-multi --cycle
   --delimiter='\t' --with-nth=4 --nth=4
   --info=inline
   "--expect=ctrl-w,ctrl-t,ctrl-s,ctrl-o,ctrl-g,ctrl-u,ctrl-x,alt-enter"
   --prompt='  ' --pointer='▌'
-  "--margin=1,2" "--padding=1,1"
-  --border=rounded --border-label=' 󰊢 Switcher ' --border-label-pos=3
-  --header "$header" --header-first
+  "--margin=1,1" "--padding=0"
+  --input-border=rounded --input-label=' Search ' --input-label-pos=3
+  --list-border=rounded --list-label=' Switcher ' --list-label-pos=3
+  --footer="$footer" --footer-border=line
 )
 
 if [[ "$preview_enabled" != "disabled" ]]; then
   fzf_args+=(
     --preview "bash '$SCRIPT_DIR/preview.sh' {1} {2} {3}"
-    --preview-window 'right:52%:border-rounded:wrap'
-    --preview-label ' 󰈈 Preview '
+    --preview-window 'right:52%:wrap'
+    --preview-border=rounded --preview-label=' 󰈈 Preview ' --preview-label-pos=3
   )
 fi
 
 if [[ -n "$A" ]]; then
-  fzf_args+=(--color "fg:${TXT:--1},bg:${background},gutter:${background},hl:${A},fg+:${TXT:--1},bg+:${SURF:--1},hl+:${A},prompt:${A},pointer:${A},info:${SUB:--1},border:${OVL:--1},label:${A}:bold,header:${SUB:--1},preview-border:${OVL:--1},preview-label:${SUB:--1}")
+  fzf_args+=(--color "fg:${TXT:--1},bg:${background},gutter:${background},hl:${A},fg+:${TXT:--1},bg+:${SURF:--1},hl+:${A},prompt:${A},pointer:${A},info:${SUB:--1},input-border:${OVL:--1},input-label:${A}:bold,list-border:${OVL:--1},list-label:${A}:bold,preview-border:${OVL:--1},preview-label:${SUB:--1},footer:${SUB:--1},footer-border:${OVL:--1}")
 elif [[ "$menu_transparent" == "false" ]]; then
   fzf_args+=(--color "bg:${background},gutter:${background},bg+:${SURF}")
 fi
