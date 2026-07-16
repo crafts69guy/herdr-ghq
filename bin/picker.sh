@@ -188,9 +188,15 @@ fzf_args=(
 )
 
 if [[ "$preview_enabled" != "disabled" ]]; then
+  # Preview sits BELOW the list (not to the side) so the footer command bar can
+  # span the full terminal width — fzf scopes the footer to the input/list
+  # window, which is only full width when the preview is on top or bottom.
+  preview_pos="$(toml_get preview_position "$CONFIG_FILE" down)"
+  case "$preview_pos" in right | left | up | down) ;; *) preview_pos="down" ;; esac
+  preview_size="$(toml_get preview_size "$CONFIG_FILE" 58%)"
   fzf_args+=(
     --preview "bash '$SCRIPT_DIR/preview.sh' {1} {2} {3}"
-    --preview-window 'right:52%:wrap'
+    --preview-window "${preview_pos}:${preview_size}:wrap"
     --preview-border=rounded --preview-label=' 󰈈 Preview ' --preview-label-pos=3
   )
 fi

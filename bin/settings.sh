@@ -24,6 +24,7 @@ SETTINGS=(
   "include_agents|true|list running agents in the switcher"
   "include_workspaces|true|list open workspaces in the switcher"
   "preview|enabled|show the preview pane"
+  "preview_position|down|down = full-width footer; right = side-by-side"
   "preview_readme|true|include README in the preview"
   "clone_source|clipboard|seed clone input from clipboard"
   "open_after_clone|true|open a repo right after cloning"
@@ -57,6 +58,7 @@ cycle() {
     label)
       case "$cur" in repo) echo owner-repo ;; owner-repo) echo path ;; *) echo repo ;; esac ;;
     preview) [[ "$cur" == enabled ]] && echo disabled || echo enabled ;;
+    preview_position) [[ "$cur" == down ]] && echo right || echo down ;;
     preview_readme | open_after_clone | notifications | include_agents | include_workspaces) [[ "$cur" == true ]] && echo false || echo true ;;
     clone_source) [[ "$cur" == clipboard ]] && echo prompt || echo clipboard ;;
     transparency)
