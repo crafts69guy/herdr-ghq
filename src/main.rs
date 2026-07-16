@@ -8,6 +8,7 @@ mod history;
 mod preview;
 mod settings;
 mod ui;
+mod update;
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -52,6 +53,8 @@ pub struct App {
     pub preview_pct: u16,
     pub preview_scroll: u16,
     pub show_help: bool,
+    /// A newer version the cache knows about; shown, never acted on.
+    pub update: Option<String>,
     pub group: GroupFilter,
     pub sort: SortMode,
     /// id → last-opened epoch, for the Recent sort.
@@ -86,6 +89,8 @@ impl App {
             .resolve(&cfg.get("title_color", "peach"))
             .unwrap_or_else(|| theme.or("accent", ratatui::style::Color::Cyan));
         let sort = SortMode::parse(&cfg.get("sort", "recent"));
+        // Read before `cfg` moves into the struct.
+        let update = update::available(&cfg);
         let recent = history::load();
         let present_kinds = [Kind::Agent, Kind::Workspace, Kind::Repo]
             .into_iter()
@@ -115,6 +120,7 @@ impl App {
             preview_pct,
             preview_scroll: 0,
             show_help: false,
+            update,
             group: GroupFilter::All,
             sort,
             recent,
@@ -440,6 +446,7 @@ fn main() -> Result<()> {
     match mode.as_deref() {
         Some("--settings") => return settings::main(),
         Some("--changelog") => return changelog::main(),
+        Some("--update-check") => return update::main(),
         _ => {}
     }
 
@@ -455,6 +462,10 @@ fn main() -> Result<()> {
         action::forced_target().as_deref(),
         &cfg.get("default_target", "workspace"),
     );
+
+    // Hands the network to a detached child and returns immediately; the badge it
+    // enables shows up on a later launch. Nothing below waits on it.
+    update::spawn_refresh_if_stale(&cfg);
 
     let entries = data::load(&cfg, &theme, &root);
     if entries.is_empty() {

@@ -1,8 +1,8 @@
 //! Settings dashboard: the switcher's TUI vocabulary applied to the plugin's flat
 //! `config.toml`.
 //!
-//! This was an fzf list, which made a fixed 16-row form behave like a search: a fuzzy
-//! prompt and a `16/16` match counter. You do not *find* `sort` in this list, you walk
+//! This was an fzf list, which made a fixed form behave like a search: a fuzzy prompt
+//! and a match counter. You do not *find* `sort` in this list, you walk
 //! to it — so it is a form now, in the picker's colours and command-bar pills.
 //!
 //! It draws no border of its own. This runs in a popup pane, which herdr already frames
@@ -130,6 +130,12 @@ const SETTINGS: &[Setting] = &[
         default: "auto",
         hint: "popup background transparency",
         cycle: Cycle::Ring(&["auto", "enabled", "disabled"]),
+    },
+    Setting {
+        key: "update_check",
+        default: "true",
+        hint: "check GitHub daily for a newer version",
+        cycle: Cycle::Ring(BOOL),
     },
     Setting {
         key: "notifications",

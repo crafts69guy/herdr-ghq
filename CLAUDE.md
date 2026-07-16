@@ -64,6 +64,8 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
   a flat-config writer that preserves comments and hand-added keys
 - `changelog.rs` — the `--changelog` mode: parses `$HERDR_PLUGIN_ROOT/CHANGELOG.md` and renders it
   (inline markdown, hanging-indent wrap, `← installed` marker from `CARGO_PKG_VERSION`)
+- `update.rs` — the `--update-check` mode plus the cache the picker reads
+  (`$XDG_STATE_HOME/herdr-ghq/update.tsv`, `checked_at<TAB>latest`, 24h TTL)
 
 **Sort vs. search:** fuzzy score always wins while a query is present; `SortMode` (recent/name/kind)
 only orders the resting, no-query list. Both paths honour the `GroupFilter`. Ties break on load
@@ -96,6 +98,12 @@ order so the list stays stable.
   section to a dated one and feeds it verbatim to `gh release create`. Commits are not
   Conventional Commits and nothing is generated from `git log` — an empty `[Unreleased]` aborts
   the release.
+- **The TUI never makes a network request.** `update.rs` spawns a detached `--update-check`
+  child (own process group, no stdio) that runs `git ls-remote` and writes a cache; the picker
+  only ever reads that file, so the badge lands on a *later* launch. Do not "simplify" this into
+  a thread: the picker frequently exits in under a second and the fetch takes several, so the
+  cache would never be written. `git ls-remote` over the GitHub API on purpose — no `jq`, no
+  60/hour unauthenticated rate limit, no auth. Everything fails silently.
 - **`ctrl-x` (remove) is the only destructive path.** It requires typing the repo name to confirm.
   Preserve that; test against disposable repos.
 - **Pane commands must launch through `$HERDR_PLUGIN_ROOT`** — `tests/manifest_spec.sh` asserts the

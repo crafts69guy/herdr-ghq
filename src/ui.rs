@@ -292,7 +292,30 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ));
         spans.push(Span::raw(" "));
     }
+    let pills_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // A newer version, mentioned once, at the far end and out of the way of the keys.
+    // Nothing here installs anything; it is a fact, not a prompt — so it yields to the
+    // command bar rather than overdrawing it, and simply goes unsaid when the keys
+    // already fill the row. The changelog and settings panes still show the version.
+    if let Some(v) = &app.update {
+        let badge = format!(" ↑ v{v} ");
+        let w = badge.chars().count() as u16;
+        if area.width >= pills_width + w {
+            let at = Rect::new(area.x + area.width - w, area.y, w, 1);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    badge,
+                    Style::default()
+                        .bg(t.or("peach", Color::Yellow))
+                        .fg(ink)
+                        .add_modifier(Modifier::BOLD),
+                ))),
+                at,
+            );
+        }
+    }
 }
 
 /// A centred, colourful keybindings cheatsheet drawn on top of everything.

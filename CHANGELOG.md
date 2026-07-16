@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An **update check**: once a day, the plugin asks GitHub whether a newer version is
+  tagged and shows `↑ v0.6.0` at the end of the command bar. It never installs anything,
+  and it yields to the keys rather than overdrawing them, so it goes unsaid on a narrow
+  terminal. Turn it off with `update_check = "false"` for a plugin that makes no
+  outbound requests at all.
+
+  The switcher itself never touches the network: the check runs in a detached child
+  process and leaves a cache the TUI reads. The picker often lives less than a second,
+  and the fetch takes a few — a thread inside it would be killed before it finished.
+  Offline, unreachable, or rate-limited, nothing is shown and the switcher opens as
+  always.
 - A **changelog viewer**: the `ghq.changelog` action opens this file as a popup, in the
   switcher's colours, with the version you are running marked `← installed`. It reads
   the `CHANGELOG.md` that ships beside the plugin, so it needs no network and always
@@ -18,14 +29,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The settings dashboard is now part of the switcher's TUI instead of an fzf list, and
   opens as a session-modal popup sized to its content rather than a full-screen overlay.
-  It reads as the form it is: no fuzzy prompt, no `16/16` match counter, and no border
-  label doubling herdr's own pane title. `↑`/`↓` walk it, `enter` cycles the value or
+  It reads as the form it is: no fuzzy prompt, no match counter, and no border label
+  doubling herdr's own pane title. `↑`/`↓` walk it, `enter` cycles the value or
   edits `split_ratio` in place, `esc` closes. Needs herdr ≥ 0.7.4, already the declared
   minimum.
 
 ### Fixed
 
-- All 16 settings are visible: the fzf dashboard cut off `notification_position` and
+- Every setting is visible: the fzf dashboard cut off `notification_position` and
   truncated the `preview_position` hint. A window too short to fit the form now scrolls
   to keep the selection in view instead of silently hiding rows.
 - Opening the switcher no longer fails on machines without `fzf`. Nothing in the plugin

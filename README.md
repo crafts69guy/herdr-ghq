@@ -114,6 +114,9 @@ the `ghq.settings` action. See `examples/config.toml` for every key; highlights:
 - `preview` / `preview_readme` — the preview pane
 - `clone_source` — seed the clone prompt from the `clipboard` (default) or start blank
 - `split_direction` / `split_ratio` — geometry for split targets
+- `update_check` — ask GitHub once a day whether a newer version is tagged (`true` by
+  default). Shows `↑ v0.6.0` in the command bar; never installs anything. Set to `false`
+  and the plugin makes no outbound requests.
 
 ## How it works
 

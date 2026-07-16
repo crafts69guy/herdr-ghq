@@ -39,6 +39,12 @@ open_after_clone = "true"
 # Popup background: auto follows the terminal; disabled paints an opaque panel.
 transparency = "auto"       # auto | enabled | disabled
 
+# Ask GitHub once a day whether a newer version is tagged, and show it in the
+# switcher's command bar. Never installs anything. The check runs in a detached
+# process, not in the TUI, and fails silently when offline. Set to "false" for no
+# outbound requests at all.
+update_check = "true"
+
 # herdr notifications.
 notifications = "true"
 notification_position = "top-right"  # top-left | top-right | bottom-left | bottom-right
