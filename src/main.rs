@@ -35,7 +35,6 @@ pub struct App {
     pub theme: Theme,
     pub title_color: ratatui::style::Color,
     pub cfg: Config,
-    pub root: String,
     pub script_dir: String,
     pub preview: Text<'static>,
     preview_id: String,
@@ -52,6 +51,15 @@ pub struct App {
     pub preview_position: String,
     pub preview_pct: u16,
     pub preview_scroll: u16,
+    /// Inner width of the preview pane at the last draw. The card clips its
+    /// bodies to this instead of wrapping them, so a render needs it up front —
+    /// hence `run` draws before it requests.
+    pub preview_width: u16,
+    /// Rows the current card occupies, and rows the pane can show. Because the
+    /// card clips rather than wraps, one card line is one screen row, so these
+    /// two bound the scroll exactly.
+    pub preview_len: u16,
+    pub preview_rows: u16,
     pub show_help: bool,
     /// A newer version the cache knows about; shown, never acted on.
     pub update: Option<String>,
@@ -77,13 +85,7 @@ enum Flow {
 }
 
 impl App {
-    fn new(
-        entries: Vec<Entry>,
-        theme: Theme,
-        cfg: Config,
-        root: String,
-        script_dir: String,
-    ) -> Self {
+    fn new(entries: Vec<Entry>, theme: Theme, cfg: Config, script_dir: String) -> Self {
         let preview_enabled = cfg.get("preview", "enabled") != "disabled";
         let preview_position = cfg.get("preview_position", "right");
         let preview_pct = cfg
@@ -103,7 +105,7 @@ impl App {
             .into_iter()
             .filter(|&k| entries.iter().any(|e| e.kind == k))
             .collect();
-        let preview_worker = preview::Worker::spawn(script_dir.clone(), root.clone(), cfg.clone());
+        let preview_worker = preview::Worker::spawn(script_dir.clone(), cfg.clone(), theme.clone());
         let mut app = App {
             entries,
             filtered: Vec::new(),
@@ -113,7 +115,6 @@ impl App {
             theme,
             title_color,
             cfg,
-            root,
             script_dir,
             preview: Text::default(),
             preview_id: String::new(),
@@ -126,6 +127,10 @@ impl App {
             preview_position,
             preview_pct,
             preview_scroll: 0,
+            // Corrected by the first draw, which always precedes the first request.
+            preview_width: 60,
+            preview_len: 0,
+            preview_rows: 1,
             show_help: false,
             update,
             show_changelog: false,
@@ -202,6 +207,13 @@ impl App {
         self.show_changelog = true;
     }
 
+    /// Scroll the preview, stopping at both ends. The list keeps `^j`/`^k`, so
+    /// the preview takes the `⌥` pair: the same fingers, the other pane.
+    fn scroll_preview(&mut self, delta: i32) {
+        let max = self.preview_len.saturating_sub(self.preview_rows) as i32;
+        self.preview_scroll = (self.preview_scroll as i32 + delta).clamp(0, max) as u16;
+    }
+
     fn toggle_preview(&mut self) {
         self.preview_enabled = !self.preview_enabled;
         if self.preview_enabled {
@@ -241,7 +253,9 @@ impl App {
         self.preview_seq += 1;
         let entry = self.entries[idx].clone();
         self.preview_label = entry.primary.clone();
-        self.preview_pending = self.preview_worker.request(self.preview_seq, entry);
+        self.preview_pending =
+            self.preview_worker
+                .request(self.preview_seq, entry, self.preview_width);
         self.preview_since = Some(Instant::now());
     }
 
@@ -271,7 +285,9 @@ impl App {
             if done.seq != self.preview_seq {
                 continue; // stale: the selection moved on
             }
+            self.preview_len = done.text.lines.len() as u16;
             self.preview = done.text;
+            // A new card starts at the top: the offset belonged to the old one.
             self.preview_scroll = 0;
             self.preview_pending = false;
             installed = true;
@@ -373,6 +389,16 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
         // Alt-p toggles the preview pane; Alt-s cycles the sort order.
         KeyCode::Char('p') if alt => {
             app.toggle_preview();
+            Flow::Continue
+        }
+        // Alt-j/k scroll the preview without moving the selection, so a long
+        // README or an agent's backlog can be read from the list.
+        KeyCode::Char('j') if alt => {
+            app.scroll_preview(1);
+            Flow::Continue
+        }
+        KeyCode::Char('k') if alt => {
+            app.scroll_preview(-1);
             Flow::Continue
         }
         KeyCode::Char('s') if alt => {
@@ -477,8 +503,11 @@ fn run(
     app: &mut App,
 ) -> Result<Option<(Option<Entry>, Accept)>> {
     loop {
-        app.request_preview();
+        // Draw first: it publishes the preview pane's width, which the request
+        // below needs to clip the card to. The first pass draws an empty pane
+        // for one frame, which is what the placeholder is for anyway.
         terminal.draw(|f| ui::draw(f, app))?;
+        app.request_preview();
         wait_for_work(app)?;
         if !event::poll(Duration::ZERO)? {
             continue; // woke for a finished preview, not a key: redraw it
@@ -533,7 +562,9 @@ fn main() -> Result<()> {
         return Err(err.into());
     }
 
-    let mut app = App::new(entries, theme, cfg, root, script_dir.clone());
+    // `root` is not carried into the App: repo entries already hold their absolute
+    // `dir`, which is the only thing the preview and the actions ever needed it for.
+    let mut app = App::new(entries, theme, cfg, script_dir.clone());
     let mut terminal = ratatui::init();
     let outcome = run(&mut terminal, &mut app);
     ratatui::restore();
@@ -620,6 +651,36 @@ mod tests {
         let order = browse_order(&e, &HashMap::new(), GroupFilter::All, SortMode::Kind);
         // agent(1), workspace(3), repos in load order(0,2)
         assert_eq!(order, vec![1, 3, 0, 2]);
+    }
+
+    fn app_with_preview(len: u16, rows: u16) -> App {
+        let mut app = App::new(sample(), Theme::default(), Config::default(), ".".into());
+        app.preview_len = len;
+        app.preview_rows = rows;
+        app
+    }
+
+    #[test]
+    fn preview_scroll_stops_at_the_last_screenful() {
+        let mut app = app_with_preview(60, 20);
+        app.scroll_preview(1000);
+        // The end of the scroll is the last full screen, not the last line:
+        // scrolling past it would leave the pane showing blanks.
+        assert_eq!(app.preview_scroll, 40);
+    }
+
+    #[test]
+    fn preview_scroll_stops_at_the_top() {
+        let mut app = app_with_preview(60, 20);
+        app.scroll_preview(-5);
+        assert_eq!(app.preview_scroll, 0);
+    }
+
+    #[test]
+    fn preview_that_fits_does_not_scroll() {
+        let mut app = app_with_preview(5, 20);
+        app.scroll_preview(3);
+        assert_eq!(app.preview_scroll, 0);
     }
 
     #[test]

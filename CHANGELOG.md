@@ -17,6 +17,50 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cost you your place — `esc` puts you back on the same entry. It shares the parser and
   renderer with the `ghq.changelog` pane, so the two cannot drift apart.
 
+- **The preview scrolls**, with `⌥j` / `⌥k` — the `⌥` echo of the `^j` / `^k` that move
+  the list, so the two panes move under the same fingers. The pane says `⌥jk 24/64` while
+  there is anything below the fold, and stays quiet when the card fits. A card is 60-odd
+  rows once an agent's output is in it, so most of it used to be simply unreachable: the
+  scroll offset existed in the code but nothing was ever bound to it.
+
+### Changed
+
+- **An agent's output keeps the agent's colours.** herdr can hand back the escape
+  sequences from the agent's own screen, so its diffs, syntax highlighting, and status
+  line now read in the preview the way they read in the pane, instead of as flat text.
+- **A README excerpt is rendered as markdown**, not dumped: headings in the title colour,
+  bullets marked, inline `code` and `**bold**` styled, and links flattened to their text
+  — a pane this narrow has no room for a URL, and the badges at the top of a README are
+  mostly URL. It shares the renderer with the `⌥c` changelog popup.
+- The preview is now a **card**: a header carrying the entry's name and its state as a
+  filled pill, a column of aligned `label   value` rows, then each body under a
+  captioned rule. It is drawn from your herdr `[theme.custom]` colours like the rest of
+  the switcher, where it used to hardcode its own — a status pill here is now the same
+  colour as that entry's bullet in the list, and the tab marker is the same `▌` the list
+  marks its selection with.
+- A **workspace preview lists its tabs** — each with its live status, pane count, and a
+  marker on the active one. It only ever showed counts before.
+- An **agent's recent output is clipped to the preview pane** instead of wrapped. The
+  output arrives at the *agent's* pane width, which is far wider than the preview, so
+  wrapping shredded every line into fragments. Blank runs are collapsed too, so what you
+  see is the output rather than the empty half of somebody's screen.
+- **`jq` is no longer a requirement of any kind.** The preview was the last thing that
+  called it; agents and workspaces are now read with `serde_json`, as the switcher's list
+  already was. Nothing in the plugin shells out to `jq` any more, so it has been dropped
+  from the requirements — including the claim that agents and workspaces needed it, which
+  had not been true of the list itself for some time.
+
+### Fixed
+
+- **The agent preview showed raw JSON** instead of the agent. herdr nests the record
+  under `result.agent`, and the preview read `result.agent_status` — which is not an
+  error, just absent — so it printed the whole envelope as the agent's name and
+  `unknown` as its status. The workspace preview had the same fault, and its tab list
+  had been reading a field that does not exist. Agents and workspaces are now parsed in
+  Rust rather than by jq filters.
+- The repo preview no longer repeats the absolute path as the first line of its file
+  tree; the card's own `path` row already carries it.
+
 ## [0.6.0] - 2026-07-16
 
 ### Added

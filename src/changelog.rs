@@ -109,7 +109,7 @@ pub fn parse(text: &str) -> Vec<Block> {
 
 /// `[text](url)` → `text`. A URL is unclickable here and swamps the line it sits on;
 /// the reader wants the word, and the file is one `git show` away.
-fn flatten_links(text: &str) -> String {
+pub(crate) fn flatten_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(open) = rest.find('[') {
@@ -171,7 +171,7 @@ fn wrap(text: &str, width: usize, first: &str, rest: &str) -> Vec<(String, Strin
 /// The inline markdown this changelog actually uses: `` `code` ``, `**bold**`, `*italic*`.
 /// Delimiters are balanced within a bullet and `wrap` never splits a word, so a run
 /// cannot straddle a line break.
-fn spans(text: &str, base: Style, code: Style) -> Vec<Span<'static>> {
+pub(crate) fn spans(text: &str, base: Style, code: Style) -> Vec<Span<'static>> {
     let mut out = Vec::new();
     let mut buf = String::new();
     let (mut in_code, mut bold, mut italic) = (false, false, false);

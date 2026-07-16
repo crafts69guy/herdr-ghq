@@ -4,9 +4,7 @@
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
-};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::App;
@@ -65,6 +63,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_input(f, app, root[0], title, accent, sub, overlay);
     draw_list(f, app, list_area, title, accent, text, overlay, surface);
     if let Some(area) = preview_area {
+        // Publish the pane's inner size: the width for the next render request
+        // (the card clips to it, and only the layout knows it), the height for
+        // the scroll clamp. A resize therefore reaches the preview on the next
+        // request, not this frame — the shown card keeps the width it was built
+        // at until the selection moves.
+        app.preview_width = area.width.saturating_sub(2);
+        app.preview_rows = area.height.saturating_sub(2);
         draw_preview(f, app, area, title, overlay);
     }
     draw_footer(f, app, root[2]);
@@ -258,17 +263,30 @@ fn draw_list(
 }
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Color) {
-    let block = boxed("󰈈 Preview", title, border);
+    let mut block = boxed("󰈈 Preview", title, border);
+    // Say so only when there is something below the fold, and say where you are
+    // — an offset on a card that fits would be noise.
+    if app.preview_scroll > 0 || app.preview_len > app.preview_rows {
+        let sub = app.theme.or("subtext0", Color::DarkGray);
+        let last = app.preview_scroll + app.preview_rows.min(app.preview_len);
+        block = block.title(
+            Line::from(Span::styled(
+                format!(" ⌥jk {last}/{} ", app.preview_len),
+                Style::default().fg(sub),
+            ))
+            .right_aligned(),
+        );
+    }
     // A slow render shows the placeholder rather than the previous entry's
     // preview, which would otherwise read as the current one.
     let (body, scroll) = match app.placeholder_frame() {
         Some(frame) => (placeholder(app, frame, area), 0),
         None => (app.preview.clone(), app.preview_scroll),
     };
-    let para = Paragraph::new(body)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+    // No `Wrap`: every body is clipped to the pane, so one card line is one row
+    // and `scroll` counts what the eye counts. Wrapping would make the offset
+    // drift from the content as soon as a line ran long.
+    let para = Paragraph::new(body).block(block).scroll((scroll, 0));
     f.render_widget(para, area);
 }
 
@@ -450,6 +468,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         head(" View"),
         row("⌥s", blue, "Cycle sort order"),
         row("⌥p", mauve, "Toggle preview"),
+        row("⌥j / ⌥k", teal, "Scroll the preview"),
         blank(),
         head(" This plugin"),
         row("⌥c", title, "What's new"),

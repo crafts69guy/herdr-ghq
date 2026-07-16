@@ -23,7 +23,6 @@ required.
 | **herdr** ≥ 0.7.4 | the host multiplexer |
 | **[`ghq`](https://github.com/x-motemen/ghq)** | repository source |
 | **[Rust / `cargo`](https://rustup.rs)** | the TUI builds on demand the first time you open it |
-| _optional_ **[`jq`](https://jqlang.github.io/jq/)** | agents + workspaces; without it the switcher falls back to repos only |
 | _optional_ **[`eza`](https://github.com/eza-community/eza)** | richer preview tree |
 | _optional_ **[`git-hub`](https://github.com/crafts69guy/herdr-git-hub)** | the `ctrl-g` handoff |
 
@@ -84,6 +83,7 @@ herdr server reload-config
 | `tab` / `shift-tab` | cycle the group filter — All → Agents → Workspaces → Repos (empty groups skipped) |
 | `alt-s` | cycle the sort: `recent` → `name` → `kind` |
 | `alt-p` | toggle the preview pane |
+| `alt-j` / `alt-k` | scroll the preview without moving the selection |
 | `alt-c` | read the changelog over the list (`esc` returns to the same entry) |
 | `alt-u` | update the plugin itself (vs `ctrl-u`, which updates the highlighted repo) |
 | `?` | toggle the keybindings cheatsheet |
@@ -117,7 +117,7 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | Key | Values |
 | --- | --- |
 | `default_target` | `workspace` (default) · `tab` · `split` · `pane` |
-| `include_agents` / `include_workspaces` | blend agents/workspaces into the list (needs `jq`) |
+| `include_agents` / `include_workspaces` | blend agents/workspaces into the list |
 | `sort` | `recent` (default) · `name` · `kind` |
 | `label` | workspace/tab label: `repo` · `owner-repo` · `path` |
 | `preview` / `preview_readme` | the preview pane |
@@ -125,9 +125,12 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | `split_direction` / `split_ratio` | geometry for split targets |
 | `update_check` | ask GitHub once a day whether a newer version is tagged (`true` by default) |
 
-The switcher is themed from herdr's `[theme.custom]`, and previews by kind: repos show
-branch · dirty/clean · last commit, a file tree, and a README excerpt; agents show status
-and recent output; workspaces show their tabs and panes.
+The switcher is themed from herdr's `[theme.custom]`, and previews each kind as a card —
+a header with the entry's state as a pill, aligned `label value` rows, then bodies under
+captioned rules. Repos show branch · clean/dirty · last commit, a file tree, and a README
+excerpt rendered as markdown; agents show what they are doing and their recent output, in
+the agent's own colours; workspaces list their tabs, each with its live status. Long cards
+scroll with `alt-j` / `alt-k`.
 
 `update_check` only ever shows `↑ v0.6.0` in the command bar — it never installs anything.
 Set it to `false` and the plugin makes no outbound requests at all.
@@ -140,7 +143,8 @@ popup for settings and the changelog.
 
 The picker itself is the Rust TUI in `src/`, built to `target/release/herdr-ghq-switcher` by
 `bin/picker.sh` on first run. It reads `herdr agent list`, `herdr workspace list`, and
-`ghq list`, fuzzy-filters with nucleo, and previews the selection via `bin/preview.sh`. On
+`ghq list`, fuzzy-filters with nucleo, and previews the selection as a card drawn in your
+herdr theme colours — `bin/preview.sh` supplies only the repo's file tree. On
 accept it maps the key to a herdr CLI verb — `agent focus`, `workspace focus`,
 `workspace create`, `tab create`, `pane split`, `pane send-text` — always targeting the
 captured origin pane or a real id from herdr, never a guessed one.

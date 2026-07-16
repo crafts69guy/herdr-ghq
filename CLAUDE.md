@@ -58,7 +58,10 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
   `herdr workspace list`, and `ghq list`
 - `ui.rs` — three-row layout: Search (3) / body (list + optional preview) / full-width command bar (1);
   `boxed()` is shared with the settings dashboard
-- `preview.rs` — shells out to `bin/preview.sh` and converts its ANSI via `ansi-to-tui`
+- `preview.rs` — the preview card (header + pills / meta column / captioned rules). Reads
+  agents and workspaces from herdr's JSON with `serde_json` and styles everything from
+  `Theme`; shells out to `bin/preview.sh` only for the repo file tree, which arrives as
+  ANSI already and passes through `ansi-to-tui`
 - `action.rs` — `Accept` enum → herdr CLI verbs
 - `history.rs` — recency state at `$XDG_STATE_HOME/herdr-ghq/recent.tsv`, atomic write, cap 200
 - `settings.rs` — the `--settings` mode: the `SETTINGS` form, its cycle rings, and `write_setting`,
@@ -84,9 +87,18 @@ order so the list stays stable.
   Do not add a TOML crate or nested keys without changing both parsers and the writer in
   `src/settings.rs` (`write_setting`), which preserves comments and hand-added keys.
   Theme parsing (`[theme.custom]` from herdr's config) is a separate hand-rolled scanner.
-- **`jq` is optional.** Agents and workspaces degrade to repos-only without it. `bin/lib.sh` uses
-  awk-based `json_string_value` / `json_bool_value` precisely to avoid a hard jq dependency in the
-  launcher path.
+- **The preview clips; it must never wrap.** Every body goes through `clip`/`clip_line`
+  (`src/preview.rs`) so one card line is exactly one screen row — that is what makes
+  `preview_scroll` mean what it says and `preview_len`/`preview_rows` bound it correctly.
+  `draw_preview` therefore has no `Wrap`. Re-adding one, or emitting an unclipped line,
+  breaks the scroll silently: the offset drifts from the content instead of erroring. The
+  pane's width reaches the worker through `App::preview_width`, published by `ui::draw`,
+  which is why `run` draws *before* it calls `request_preview`.
+- **Nothing uses `jq` — keep it that way.** No code path shells out to it: the bash layer reads
+  herdr's JSON with the awk-based `json_string_value` / `json_bool_value` in `bin/lib.sh`, and the
+  Rust layer uses `serde_json` (`data.rs`, `preview.rs`). It is not a documented requirement, so a
+  new jq call would be a new hard dependency on a machine that may not have it — and a silent one,
+  since a missing jq fails the same way a wrong filter does: empty output, no error.
 - **`GHQ_FORCE_TARGET` overrides `default_target` for Enter, repos only.** `bin/action.sh` exports it
   for the `open-workspace` / `open-tab` / `open-split` hot-path actions; `src/action.rs`
   (`forced_target` + `resolve_default_target`) resolves it once in `main` and passes it to

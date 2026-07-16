@@ -1,23 +1,39 @@
-//! Preview text for the highlighted entry. Reuses the bash `preview.sh` (git
-//! tree, agent output, workspace summary) and converts its ANSI to ratatui.
+//! Preview for the highlighted entry, drawn as a card: a header row carrying
+//! the name and its state as a pill, a meta column, then bodies under captioned
+//! rules.
+//!
+//! Agents and workspaces are read from herdr's JSON here rather than in
+//! `preview.sh`. Two reasons: every colour has to come from [`Theme`] for the
+//! card to match the list and the command bar, and `serde_json` gets herdr's
+//! envelope right where hand-written jq filters silently did not — herdr nests
+//! the record under `result.agent` / `result.workspace`, and reading
+//! `result.agent_status` instead yields no error, just "unknown". `preview.sh`
+//! keeps only the file tree, the one part that arrives as ANSI already.
 //!
 //! `render` shells out and costs ~100ms on a large repo — mostly `git status`
 //! — so it runs on a [`Worker`] thread rather than between a keypress and the
 //! next frame.
 
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use ansi_to_tui::IntoText;
-use ratatui::text::Text;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
+use serde_json::Value;
 
-use crate::data::{Config, Entry, Kind};
+use crate::data::{state_color, Config, Entry, Kind, Theme};
 
-/// A render request. `seq` lets the UI drop results it has already scrolled past.
+/// A render request. `seq` lets the UI drop results it has already scrolled
+/// past; `width` is the pane's inner width at the last draw, so bodies can be
+/// clipped to it rather than wrapped.
 struct Job {
     seq: u64,
     entry: Entry,
+    width: u16,
 }
 
 /// A finished preview, tagged with the `seq` of the job that produced it.
@@ -33,7 +49,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn spawn(script_dir: String, root: String, cfg: Config) -> Self {
+    pub fn spawn(script_dir: String, cfg: Config, theme: Theme) -> Self {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (done_tx, done_rx) = mpsc::channel::<Done>();
         thread::spawn(move || {
@@ -43,7 +59,7 @@ impl Worker {
                 while let Ok(newer) = job_rx.try_recv() {
                     job = newer;
                 }
-                let text = render(&job.entry, &script_dir, &root, &cfg);
+                let text = render(&job.entry, &script_dir, &cfg, &theme, job.width);
                 if done_tx.send(Done { seq: job.seq, text }).is_err() {
                     break; // the UI is gone
                 }
@@ -56,8 +72,8 @@ impl Worker {
     }
 
     /// Queues a render. Returns false if the worker thread is gone.
-    pub fn request(&self, seq: u64, entry: Entry) -> bool {
-        self.jobs.send(Job { seq, entry }).is_ok()
+    pub fn request(&self, seq: u64, entry: Entry, width: u16) -> bool {
+        self.jobs.send(Job { seq, entry, width }).is_ok()
     }
 
     /// Non-blocking: the next finished preview, if one has landed.
@@ -66,31 +82,599 @@ impl Worker {
     }
 }
 
-pub fn render(entry: &Entry, script_dir: &str, root: &str, cfg: &Config) -> Text<'static> {
-    let kind = match entry.kind {
-        Kind::Agent => "agent",
-        Kind::Workspace => "workspace",
-        Kind::Repo => "repo",
+pub fn render(
+    entry: &Entry,
+    script_dir: &str,
+    cfg: &Config,
+    theme: &Theme,
+    width: u16,
+) -> Text<'static> {
+    let p = Ink::new(theme, cfg);
+    // A pane this narrow is unusable anyway; the floor just keeps the clip and
+    // rule arithmetic below out of saturating-to-zero territory.
+    let width = width.max(24);
+    let lines = match entry.kind {
+        Kind::Agent => agent_card(entry, width, &p, theme),
+        Kind::Workspace => workspace_card(entry, width, &p, theme),
+        Kind::Repo => repo_card(entry, script_dir, cfg, width, &p, theme),
     };
-    let dir = entry.dir.clone().unwrap_or_default();
-    let readme = if cfg.bool("preview_readme", true) {
-        "true"
+    Text::from(lines)
+}
+
+// --- card primitives -------------------------------------------------------
+
+/// The preview's slice of the theme, resolved once per render.
+struct Ink {
+    /// The panel background, used as the *text* colour on a filled pill.
+    ink: Color,
+    text: Color,
+    sub: Color,
+    overlay: Color,
+    accent: Color,
+    /// The same colour the pane titles use, so a README heading in the card
+    /// reads as a heading of the same rank.
+    title: Color,
+}
+
+impl Ink {
+    fn new(t: &Theme, cfg: &Config) -> Self {
+        Ink {
+            ink: t.or("panel_bg", Color::Rgb(16, 18, 20)),
+            text: t.or("text", Color::Reset),
+            sub: t.or("subtext0", Color::DarkGray),
+            overlay: t.or("overlay0", Color::DarkGray),
+            accent: t.or("accent", Color::Cyan),
+            // Resolved the way `App::new` resolves it, from the same setting.
+            title: t
+                .resolve(&cfg.get("title_color", "peach"))
+                .unwrap_or_else(|| t.or("accent", Color::Cyan)),
+        }
+    }
+}
+
+/// A filled pill — the shape the command bar and the help popup already use, so
+/// a state here reads as the same kind of object as a key there.
+fn pill(label: &str, bg: Color, p: &Ink) -> Span<'static> {
+    Span::styled(
+        format!(" {label} "),
+        Style::default()
+            .bg(bg)
+            .fg(p.ink)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// Icon, name, then any pills, on one row.
+fn header(
+    icon: &str,
+    icon_color: Color,
+    name: &str,
+    pills: Vec<Span<'static>>,
+    p: &Ink,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(format!(" {icon} "), Style::default().fg(icon_color)),
+        Span::styled(
+            name.to_string(),
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    for pill in pills {
+        spans.push(Span::raw(" "));
+        spans.push(pill);
+    }
+    Line::from(spans)
+}
+
+/// Width of the label column, so every value in a card starts at one column.
+const META_LABEL: usize = 8;
+
+/// One `label   value` row.
+fn meta(label: &str, value: &str, width: u16, p: &Ink) -> Line<'static> {
+    let room = (width as usize).saturating_sub(META_LABEL + 3);
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(format!("{label:<META_LABEL$}"), Style::default().fg(p.sub)),
+        Span::styled(clip(value, room), Style::default().fg(p.text)),
+    ])
+}
+
+/// A captioned rule: `── caption ──────────`. Separates a card's sections
+/// without spending a whole row on a heading.
+fn rule(caption: &str, width: u16, p: &Ink) -> Line<'static> {
+    let used = 2 + caption.chars().count() + 2;
+    let tail = (width as usize).saturating_sub(used + 1);
+    Line::from(vec![
+        Span::styled("──".to_string(), Style::default().fg(p.overlay)),
+        Span::styled(format!(" {caption} "), Style::default().fg(p.sub)),
+        Span::styled("─".repeat(tail), Style::default().fg(p.overlay)),
+    ])
+}
+
+/// A dim aside — the "nothing here" line every body falls back to.
+fn note(s: &str, p: &Ink) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(s.to_string(), Style::default().fg(p.sub)),
+    ])
+}
+
+/// Clip an already-styled line to `width`, keeping each span's colour. Content
+/// that arrives styled — the agent's ANSI output, eza's tree — cannot go through
+/// [`clip`], which would count the escapes as text and cut them mid-sequence.
+///
+/// Every body clips rather than wraps, which is also what lets the pane scroll:
+/// one line of content is one row on screen, so the scroll offset means what it
+/// says.
+fn clip_line(line: Line<'static>, width: usize) -> Line<'static> {
+    let mut used = 0usize;
+    let mut out: Vec<Span<'static>> = Vec::new();
+    for span in line.spans {
+        let n = span.content.chars().count();
+        if used + n <= width {
+            used += n;
+            out.push(span);
+            continue;
+        }
+        // This span crosses the edge: keep what fits of it and stop.
+        let room = width.saturating_sub(used);
+        if room > 0 {
+            let mut s: String = span.content.chars().take(room.saturating_sub(1)).collect();
+            s.push('…');
+            out.push(Span::styled(s, span.style));
+        }
+        break;
+    }
+    Line::from(out)
+}
+
+/// Is this line blank once its styling is set aside?
+fn is_blank(line: &Line) -> bool {
+    line.spans.iter().all(|s| s.content.trim().is_empty())
+}
+
+/// Truncate to `width` with an ellipsis. Counts chars rather than display
+/// columns: the cost of being wrong on a CJK path is a column of padding, and
+/// the alternative is a unicode-width dependency for that.
+fn clip(s: &str, width: usize) -> String {
+    if s.chars().count() <= width {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// `$HOME/x` → `~/x`, so a path still fits the value column.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(h) if !h.is_empty() && path.starts_with(&h) => format!("~{}", &path[h.len()..]),
+        _ => path.to_string(),
+    }
+}
+
+/// Run a herdr subcommand and parse its JSON envelope. Every failure — herdr
+/// missing, a non-zero exit, unparseable output — becomes `Value::Null`, which
+/// the readers below see as "field absent" and fall back on. A preview must
+/// never be the thing that fails loudly.
+fn herdr_json(args: &[&str]) -> Value {
+    let Ok(out) = Command::new("herdr").args(args).output() else {
+        return Value::Null;
+    };
+    if !out.status.success() {
+        return Value::Null;
+    }
+    serde_json::from_slice(&out.stdout).unwrap_or(Value::Null)
+}
+
+// --- agent -----------------------------------------------------------------
+
+fn agent_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'static>> {
+    let v = herdr_json(&["agent", "get", &entry.id]);
+    let a = &v["result"]["agent"];
+    let name = a["agent"].as_str().unwrap_or("agent");
+    let status = a["agent_status"].as_str().unwrap_or("unknown");
+    let cwd = a["foreground_cwd"]
+        .as_str()
+        .or_else(|| a["cwd"].as_str())
+        .unwrap_or_else(|| entry.dir.as_deref().unwrap_or(""));
+
+    let state = state_color(theme, status);
+    let mut lines = vec![
+        header(&entry.icon, state, name, vec![pill(status, state, p)], p),
+        Line::raw(""),
+    ];
+    // The terminal title is the agent's own summary of what it is doing — the
+    // one field here worth more than the ids around it, so it leads.
+    if let Some(title) = a["terminal_title_stripped"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+    {
+        lines.push(meta("doing", title, width, p));
+    }
+    if !cwd.is_empty() {
+        lines.push(meta("cwd", &tilde(cwd), width, p));
+    }
+    if let Some(pane) = a["pane_id"].as_str() {
+        lines.push(meta("pane", pane, width, p));
+    }
+    lines.push(Line::raw(""));
+    lines.push(rule("recent output", width, p));
+    lines.push(Line::raw(""));
+    lines.extend(agent_output(&entry.id, width, p));
+    lines
+}
+
+/// The agent's recent pane text, in the agent's own colours.
+///
+/// `--format ansi` hands back the escape sequences from the agent's screen, so
+/// the body reads the way the agent actually looks rather than as flat text.
+/// The rows arrive at the *agent's* pane width, far wider than this preview, so
+/// each is clipped rather than wrapped — wrapping is what turned this body into
+/// a wall of fragments.
+fn agent_output(id: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
+    let v = herdr_json(&[
+        "agent", "read", id, "--source", "recent", "--format", "ansi", "--lines", "60",
+    ]);
+    let Some(text) = v["result"]["read"]["text"].as_str() else {
+        return vec![note("(no output available)", p)];
+    };
+
+    // A pane's rows end in a carriage return; left in, it renders as a stray
+    // glyph and defeats the blank-row test below.
+    let cleaned = text.replace('\r', "");
+    let mut rows: Vec<Line<'static>> = match cleaned.into_text() {
+        Ok(t) => t.lines,
+        // Unparseable escapes: show the text rather than nothing.
+        Err(_) => cleaned.lines().map(|l| Line::raw(l.to_string())).collect(),
+    };
+
+    // A terminal pane is mostly padding. Drop the blank rows at both ends and
+    // collapse the runs between, so what survives is the output worth reading
+    // rather than the empty half of somebody's screen.
+    let first = rows.iter().position(|l| !is_blank(l));
+    let last = rows.iter().rposition(|l| !is_blank(l));
+    let (Some(first), Some(last)) = (first, last) else {
+        return vec![note("(no output yet)", p)];
+    };
+    rows.truncate(last + 1);
+    let rows = rows.split_off(first);
+
+    let mut out = Vec::new();
+    let mut prev_blank = false;
+    for row in rows {
+        let blank = is_blank(&row);
+        if blank && prev_blank {
+            continue;
+        }
+        prev_blank = blank;
+        out.push(clip_line(row, width as usize));
+    }
+    out
+}
+
+// --- workspace -------------------------------------------------------------
+
+fn workspace_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'static>> {
+    let v = herdr_json(&["workspace", "get", &entry.id]);
+    let w = &v["result"]["workspace"];
+    let label = w["label"].as_str().unwrap_or(&entry.label);
+    let status = w["agent_status"].as_str().unwrap_or("unknown");
+
+    let mut pills = vec![pill(status, state_color(theme, status), p)];
+    if w["focused"].as_bool().unwrap_or(false) {
+        pills.push(pill("current", p.accent, p));
+    }
+    let mut lines = vec![
+        header(&entry.icon, p.accent, label, pills, p),
+        Line::raw(""),
+    ];
+    if let Some(n) = w["number"].as_i64() {
+        lines.push(meta("number", &format!("#{n}"), width, p));
+    }
+    lines.push(meta(
+        "panes",
+        &w["pane_count"].as_i64().unwrap_or(0).to_string(),
+        width,
+        p,
+    ));
+    lines.push(Line::raw(""));
+    lines.push(rule("tabs", width, p));
+    lines.push(Line::raw(""));
+    lines.extend(workspace_tabs(
+        &entry.id,
+        w["active_tab_id"].as_str().unwrap_or(""),
+        width,
+        p,
+        theme,
+    ));
+    lines
+}
+
+/// The workspace's tabs. `workspace get` carries counts but no tab array, so the
+/// rows come from `tab list` — which returns every tab in the session — narrowed
+/// by workspace id.
+fn workspace_tabs(
+    wid: &str,
+    active: &str,
+    width: u16,
+    p: &Ink,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let v = herdr_json(&["tab", "list"]);
+    let Some(tabs) = v["result"]["tabs"].as_array() else {
+        return vec![note("(tabs unavailable)", p)];
+    };
+    let mut out = Vec::new();
+    for t in tabs
+        .iter()
+        .filter(|t| t["workspace_id"].as_str() == Some(wid))
+    {
+        let id = t["tab_id"].as_str().unwrap_or("");
+        let label = t["label"].as_str().unwrap_or(id);
+        let status = t["agent_status"].as_str().unwrap_or("unknown");
+        let panes = t["pane_count"].as_i64().unwrap_or(0);
+        let is_active = id == active;
+        // The same bar the list marks its selection with, for the same meaning.
+        let marker = if is_active { "▌" } else { " " };
+        let name = Style::default().fg(if is_active { p.text } else { p.sub });
+        out.push(Line::from(vec![
+            Span::styled(marker.to_string(), Style::default().fg(p.accent)),
+            Span::styled(" ● ", Style::default().fg(state_color(theme, status))),
+            Span::styled(
+                clip(label, (width as usize).saturating_sub(12)),
+                if is_active {
+                    name.add_modifier(Modifier::BOLD)
+                } else {
+                    name
+                },
+            ),
+            Span::styled(format!("  {panes}p"), Style::default().fg(p.sub)),
+        ]));
+    }
+    if out.is_empty() {
+        out.push(note("(no tabs)", p));
+    }
+    out
+}
+
+// --- repo ------------------------------------------------------------------
+
+fn repo_card(
+    entry: &Entry,
+    script_dir: &str,
+    cfg: &Config,
+    width: u16,
+    p: &Ink,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let Some(dir) = entry.dir.as_deref() else {
+        return vec![note("(no directory)", p)];
+    };
+    // ghq listed it, so it existed a moment ago; say so plainly rather than
+    // rendering a card full of blanks.
+    if !Path::new(dir).is_dir() {
+        return vec![
+            header(
+                &entry.icon,
+                entry.icon_color,
+                &entry.label,
+                vec![pill("missing", theme.or("red", Color::Red), p)],
+                p,
+            ),
+            Line::raw(""),
+            meta("path", &tilde(dir), width, p),
+        ];
+    }
+
+    // Detached HEAD has no symbolic ref; fall back to the short sha.
+    let branch = git(dir, &["symbolic-ref", "--short", "HEAD"])
+        .filter(|s| !s.is_empty())
+        .or_else(|| git(dir, &["rev-parse", "--short", "HEAD"]).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "—".into());
+    let dirty = git(dir, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    let (state, state_c) = if dirty {
+        ("dirty", theme.or("yellow", Color::Yellow))
     } else {
-        "false"
+        ("clean", theme.or("green", Color::Green))
     };
-    let out = Command::new("bash")
+
+    let mut lines = vec![
+        header(
+            &entry.icon,
+            entry.icon_color,
+            &entry.label,
+            vec![pill(state, state_c, p)],
+            p,
+        ),
+        Line::raw(""),
+        meta("branch", &branch, width, p),
+    ];
+    // A repo with no commits yet has no last commit; the row simply goes unsaid.
+    if let Some(last) = git(dir, &["log", "-1", "--format=%cr · %s"]).filter(|s| !s.is_empty()) {
+        lines.push(meta("last", &last, width, p));
+    }
+    lines.push(meta("path", &tilde(dir), width, p));
+    lines.push(Line::raw(""));
+    lines.push(rule("files", width, p));
+    lines.extend(tree(dir, script_dir, width));
+
+    if cfg.bool("preview_readme", true) {
+        if let Some((name, body)) = readme(dir) {
+            lines.push(Line::raw(""));
+            lines.push(rule(&name, width, p));
+            lines.push(Line::raw(""));
+            lines.extend(readme_lines(&body, width, p));
+        }
+    }
+    lines
+}
+
+/// The README excerpt with the little markdown worth styling at this size:
+/// headings in the title colour, bullets marked in the accent, and inline
+/// `code` / `**bold**` through the changelog's own renderer — so a README here
+/// and the `⌥c` popup treat markdown the same way.
+fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
+    let base = Style::default().fg(p.sub);
+    let code = Style::default().fg(p.accent);
+    let mut out = Vec::new();
+    for raw in body.lines().take(30) {
+        // Links flatten to their text: a preview this narrow has no room for a
+        // URL, and the badge markup at the top of a README is mostly URL. An
+        // image is demoted to a link first, so it flattens to its alt text
+        // instead of leaving the `!` behind.
+        let row = crate::changelog::flatten_links(&raw.trim_end().replace("![", "["));
+        let trimmed = row.trim_start();
+        let line = if let Some(head) = trimmed.strip_prefix('#') {
+            Line::from(Span::styled(
+                head.trim_start_matches('#').trim().to_string(),
+                Style::default().fg(p.title).add_modifier(Modifier::BOLD),
+            ))
+        } else if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            let mut spans = vec![Span::styled("• ", Style::default().fg(p.accent))];
+            spans.extend(crate::changelog::spans(item, base, code));
+            Line::from(spans)
+        } else {
+            Line::from(crate::changelog::spans(&row, base, code))
+        };
+        out.push(clip_line(line, width as usize));
+    }
+    out
+}
+
+/// Trimmed stdout of a `git -C dir` call, or None when git fails. Success with
+/// empty output stays `Some("")` — for `status --porcelain` the emptiness *is*
+/// the answer — so callers that want a value filter for it themselves.
+fn git(dir: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The file tree, still from `preview.sh`: it is the one part of the card that
+/// is already ANSI (eza's colours and icons), so it passes through rather than
+/// being re-styled here.
+fn tree(dir: &str, script_dir: &str, width: u16) -> Vec<Line<'static>> {
+    let Ok(out) = Command::new("bash")
         .arg(format!("{script_dir}/preview.sh"))
-        .arg(kind)
-        .arg(&entry.id)
-        .arg(&dir)
-        .env("GHQ_ROOT", root)
-        .env("GHQ_PREVIEW_README", readme)
-        .output();
-    match out {
-        Ok(o) => o
-            .stdout
-            .into_text()
-            .unwrap_or_else(|_| Text::raw(String::from_utf8_lossy(&o.stdout).into_owned())),
-        Err(e) => Text::raw(format!("preview unavailable: {e}")),
+        .arg(dir)
+        .output()
+    else {
+        return Vec::new();
+    };
+    let lines = out.stdout.into_text().map(|t| t.lines).unwrap_or_else(|_| {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| Line::raw(l.to_string()))
+            .collect()
+    });
+    lines
+        .into_iter()
+        .map(|l| clip_line(l, width as usize))
+        .collect()
+}
+
+/// The first README-ish file at the repo root, as (display name, contents).
+fn readme(dir: &str) -> Option<(String, String)> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.to_lowercase().starts_with("readme"))
+        .collect();
+    names.sort();
+    let name = names.into_iter().next()?;
+    let body = fs::read_to_string(Path::new(dir).join(&name)).ok()?;
+    Some((name, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clip_leaves_short_text_alone() {
+        assert_eq!(clip("main", 10), "main");
+        assert_eq!(clip("exactly-10", 10), "exactly-10");
+    }
+
+    #[test]
+    fn clip_ellipsises_at_the_limit() {
+        assert_eq!(clip("abcdefghij", 5), "abcd…");
+    }
+
+    #[test]
+    fn rule_fills_the_pane_width() {
+        let p = Ink::new(&Theme::default(), &Config::default());
+        let line = rule("files", 30, &p);
+        assert_eq!(line.width(), 29);
+    }
+
+    #[test]
+    fn meta_pads_the_label_into_a_column() {
+        let p = Ink::new(&Theme::default(), &Config::default());
+        let a = meta("cwd", "x", 40, &p);
+        let b = meta("branch", "y", 40, &p);
+        // Both values start at the same column, whatever the label's length.
+        assert_eq!(a.spans[1].content.len(), b.spans[1].content.len());
+    }
+
+    /// Three spans, red/green/blue, four chars each.
+    fn striped() -> Line<'static> {
+        Line::from(vec![
+            Span::styled("aaaa", Style::default().fg(Color::Red)),
+            Span::styled("bbbb", Style::default().fg(Color::Green)),
+            Span::styled("cccc", Style::default().fg(Color::Blue)),
+        ])
+    }
+
+    #[test]
+    fn clip_line_keeps_a_fitting_line_whole() {
+        let line = clip_line(striped(), 12);
+        assert_eq!(line.width(), 12);
+        assert_eq!(line.spans.len(), 3);
+    }
+
+    #[test]
+    fn clip_line_never_exceeds_the_width() {
+        // The guarantee the scroll math leans on: one card line, one screen row.
+        for w in 1..20usize {
+            assert!(clip_line(striped(), w).width() <= w, "overflowed at {w}");
+        }
+    }
+
+    #[test]
+    fn clip_line_cuts_mid_span_and_keeps_its_colour() {
+        let line = clip_line(striped(), 6);
+        // "aaaa" survives whole; "bbbb" is cut to "b…" and stays green.
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[1].content, "b…");
+        assert_eq!(line.spans[1].style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn clip_line_drops_spans_past_the_edge() {
+        let line = clip_line(striped(), 4);
+        // Nothing of the green or blue span survives a width the red one fills.
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content, "aaaa");
+    }
+
+    #[test]
+    fn blankness_ignores_styling() {
+        assert!(is_blank(&Line::from(vec![
+            Span::styled("   ", Style::default().fg(Color::Red)),
+            Span::raw("\t"),
+        ])));
+        assert!(!is_blank(&striped()));
     }
 }

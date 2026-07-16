@@ -12,7 +12,9 @@ use ratatui::style::Color;
 // --- theme -----------------------------------------------------------------
 
 /// Colours pulled from herdr's `[theme.custom]` so the TUI matches the terminal.
-#[derive(Clone)]
+/// The default is empty — every slot then falls back to its ratatui colour,
+/// which is also what a user with no `[theme.custom]` section gets.
+#[derive(Clone, Default)]
 pub struct Theme {
     slots: HashMap<String, Color>,
 }
@@ -81,7 +83,9 @@ fn parse_hex(raw: &str) -> Option<Color> {
 // --- plugin config ---------------------------------------------------------
 
 /// Flat `key = value` config from the plugin's config dir.
-#[derive(Clone)]
+/// The default is empty, which is what an unconfigured plugin has: every
+/// `get`/`bool` then answers with the caller's own default.
+#[derive(Clone, Default)]
 pub struct Config {
     map: HashMap<String, String>,
 }
@@ -236,7 +240,9 @@ fn run(args: &[&str]) -> Option<String> {
     }
 }
 
-fn state_color(theme: &Theme, status: &str) -> Color {
+/// Status → colour, shared with the preview card so an agent's pill there is the
+/// same colour as its bullet in the list.
+pub fn state_color(theme: &Theme, status: &str) -> Color {
     match status {
         "idle" | "ready" | "done" => theme.or("green", Color::Green),
         "working" => theme.or("yellow", Color::Yellow),
