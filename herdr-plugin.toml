@@ -8,7 +8,7 @@ platforms = ["macos", "linux"]
 [[actions]]
 id = "menu"
 title = "Project Switcher"
-description = "Open the fzf picker over ghq-managed repositories."
+description = "Open the switcher over running agents, open workspaces, and ghq repositories."
 contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
@@ -22,7 +22,7 @@ command = ["bash", "bin/action.sh"]
 [[actions]]
 id = "settings"
 title = "Configure Ghq"
-description = "Edit Ghq switcher settings in a themed fzf dashboard."
+description = "Edit Ghq switcher settings in a themed dashboard."
 contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
@@ -65,6 +65,6 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/get.sh\""]
 id = "settings"
 title = "Ghq Settings"
 placement = "popup"
-width = 96
-height = 26
+width = 88
+height = 19
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]

@@ -3,9 +3,10 @@
 ## Project Structure & Module Organization
 
 The Rust TUI lives in `src/`: `main.rs` owns the event loop, while `data.rs`,
-`ui.rs`, `preview.rs`, `action.rs`, and `history.rs` separate data loading,
-rendering, previews, accepted actions, and recency state. Bash entrypoints in
-`bin/` connect the TUI and fzf-based clone/settings flows to herdr. Plugin
+`ui.rs`, `preview.rs`, `action.rs`, `history.rs`, and `settings.rs` separate data
+loading, rendering, previews, accepted actions, recency state, and the settings
+dashboard. Bash entrypoints in
+`bin/` connect the TUI and the bash clone flow to herdr. Plugin
 metadata is defined in `herdr-plugin.toml`; sample user configuration belongs in
 `examples/`, integration checks in `tests/`, and documentation images in `docs/`.
 Do not commit generated `target/` artifacts.

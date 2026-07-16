@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fzf preview for the unified switcher. Resilient by design (no set -e): a
+# Preview text for the unified switcher (shelled out to by src/preview.rs). Resilient by design (no set -e): a
 # preview must never abort mid-render.
 #   preview.sh <kind> <id> <dir>
 # repo → git header + file tree + README; agent → status + recent output;

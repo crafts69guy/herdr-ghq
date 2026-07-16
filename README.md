@@ -1,7 +1,7 @@
 # herdr-ghq
 
 A [herdr](https://herdr.dev) plugin that turns one keypress into a **unified switcher**.
-A single themed fzf list blends three things you jump between all day — your running
+A single themed list blends three things you jump between all day — your running
 coding **agents**, your open **workspaces**, and every [`ghq`](https://github.com/x-motemen/ghq)
 repository — and the accept key does the right thing for whatever you land on.
 
@@ -59,8 +59,9 @@ want it** — a new workspace, tab, split, or the current pane.
   show status and recent output; workspaces show their tabs and panes.
 - **Clone flow** that seeds its prompt from a repo URL on your clipboard, then opens the
   fresh checkout with your default target.
-- **Settings dashboard** — the `ghq.settings` action opens a themed fzf toggler over the
-  flat config; changes apply on the next invocation, no server reload needed.
+- **Settings dashboard** — the `ghq.settings` action opens the switcher's TUI as a
+  session-modal popup over the flat config: a form you walk with `↑`/`↓`, `enter` cycles
+  the value. Changes apply on the next invocation, no server reload needed.
 
 > Agents and workspaces need [`jq`](https://jqlang.github.io/jq/). Without it the switcher
 > gracefully falls back to repos only.
@@ -73,7 +74,6 @@ want it** — a new workspace, tab, split, or the current pane.
   time you open it (`brew install rust`)
 - Optional: [`eza`](https://github.com/eza-community/eza) (richer preview tree),
   the [`git-hub`](https://github.com/crafts69guy/herdr-git-hub) plugin (`ctrl-g` handoff).
-  The `get`/`settings` actions still use `fzf`.
 
 ## Install
 
@@ -117,16 +117,18 @@ the `ghq.settings` action. See `examples/config.toml` for every key; highlights:
 
 ## How it works
 
-Each action (`bin/action.sh`) captures the origin pane id and cwd, then opens an overlay
-pane (`picker`, `get`, or `settings`). The picker is a Rust TUI (`src/`, built to
+Each action (`bin/action.sh`) captures the origin pane id and cwd, then opens a pane —
+an overlay for `picker` and `get`, a session-modal popup for `settings`. The picker is a
+Rust TUI (`src/`, built to
 `target/release/herdr-ghq-switcher` by `bin/picker.sh` on first run) that reads
 `herdr agent list`, `herdr workspace list`, and `ghq list`, fuzzy-filters with nucleo,
 and previews the selection (reusing `bin/preview.sh`). On accept it maps the key to a
 herdr CLI verb — `agent focus` / `workspace focus` / `workspace create` / `tab create` /
 `pane split` / `pane send-text` — always targeting the captured origin pane or a real id
-from herdr, never a guessed one. Clone/settings stay as bash (`bin/get.sh`,
-`bin/settings.sh`). Removal (`ctrl-x`) is the only destructive path and always requires
-typing the repo name to confirm.
+from herdr, never a guessed one. The settings dashboard is the same binary in
+`--settings` mode (`bin/settings.sh` execs `bin/picker.sh --settings`, reusing its
+on-demand build); only the clone flow is still bash (`bin/get.sh`). Removal (`ctrl-x`)
+is the only destructive path and always requires typing the repo name to confirm.
 
 ## Changelog
 

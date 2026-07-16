@@ -23,20 +23,19 @@ case "$ACTION_ID" in
 esac
 
 command -v ghq >/dev/null 2>&1 || die "ghq is required — brew install ghq." "ghq not found on PATH"
-if [[ "$entrypoint" != "get" ]]; then
-  command -v fzf >/dev/null 2>&1 || die "fzf is required — brew install fzf." "fzf not found on PATH"
-fi
 
 pane_id="$(context_pane_id)"
 cwd=""
 
 # The settings dashboard is a fixed-size form, so it opens as a session-modal popup
-# sized to its content: 16 rows plus fzf's header and border, and a widest line of
-# `%-22s %-12s` plus a 45-column hint. Cells rather than a percentage — the form does
-# not get more readable on a 200-column monitor. The picker stays a full overlay.
+# sized to its content: 16 settings + border + command bar = 19 rows, and a widest row
+# of a 22-column key, a 14-column value, and a 45-column hint = 88. Cells rather than a
+# percentage — the form does not get more readable on a 200-column monitor. Keep in step
+# with SETTINGS in src/settings.rs; a smaller window scrolls rather than clipping.
+# The picker stays a full overlay.
 placement=(--placement overlay)
 case "$entrypoint" in
-  settings) placement=(--placement popup --width 96 --height 26) ;;
+  settings) placement=(--placement popup --width 88 --height 19) ;;
 esac
 
 command=("$(herdr_bin)" plugin pane open --plugin ghq --entrypoint "$entrypoint" "${placement[@]}")

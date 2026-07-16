@@ -5,6 +5,7 @@ mod action;
 mod data;
 mod history;
 mod preview;
+mod settings;
 mod ui;
 
 use std::cmp::Reverse;
@@ -432,6 +433,12 @@ fn run(
 }
 
 fn main() -> Result<()> {
+    // One binary, one mode per entrypoint: bin/settings.sh execs us with --settings so
+    // both dashboards share this build, the theme, and the flat config reader.
+    if env::args().skip(1).any(|a| a == "--settings") {
+        return settings::main();
+    }
+
     let cfg = Config::load();
     let theme = Theme::load();
     let root = data::ghq_root();

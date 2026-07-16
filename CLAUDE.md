@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A [herdr](https://herdr.dev) plugin providing a unified switcher over three sources — running
 herdr **agents**, open herdr **workspaces**, and **ghq repos** — in one fuzzy picker. It is a
-Rust TUI (ratatui + nucleo), not an fzf wrapper; the clone and settings flows are still bash + fzf.
+Rust TUI (ratatui + nucleo), not an fzf wrapper. The switcher and the settings dashboard are
+two modes of the same binary; only the clone flow is still bash. The plugin needs no fzf.
 See `README.md` for user-facing keybindings and configuration.
 
 ## Commands
@@ -34,8 +35,9 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
 **Two layers, joined by environment variables.** Every action starts in bash and may end in Rust:
 
 1. `bin/action.sh` is the single entrypoint for all six manifest actions. It maps the action id
-   (via `HERDR_PLUGIN_ACTION_ID`) to an overlay pane id (`picker` / `get` / `settings`), captures
-   the **origin pane id and cwd** before the overlay steals focus, and passes them forward as
+   (via `HERDR_PLUGIN_ACTION_ID`) to a pane id (`picker` / `get` overlays, `settings` popup) and
+   its placement, captures the **origin pane id and cwd** before the pane steals focus, and
+   passes them forward as
    `GHQ_ORIGIN_PANE_ID` / `GHQ_ORIGIN_CWD` on `herdr plugin pane open`.
 2. `bin/picker.sh` builds `target/release/herdr-ghq-switcher` on demand (first run only) and
    `exec`s it. It prepends common toolchain paths to `PATH` because herdr's server env lacks the
@@ -53,10 +55,13 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 - `main.rs` — `App` state, `handle_key` → `Flow` (Continue/Quit/Accept), `browse_order`
 - `data.rs` — `Theme`, `Config`, `Entry`, and `load()` which shells out to `herdr agent list`,
   `herdr workspace list`, and `ghq list`
-- `ui.rs` — three-row layout: Search (3) / body (list + optional preview) / full-width command bar (1)
+- `ui.rs` — three-row layout: Search (3) / body (list + optional preview) / full-width command bar (1);
+  `boxed()` is shared with the settings dashboard
 - `preview.rs` — shells out to `bin/preview.sh` and converts its ANSI via `ansi-to-tui`
 - `action.rs` — `Accept` enum → herdr CLI verbs
 - `history.rs` — recency state at `$XDG_STATE_HOME/herdr-ghq/recent.tsv`, atomic write, cap 200
+- `settings.rs` — the `--settings` mode: the `SETTINGS` form, its cycle rings, and `write_setting`,
+  a flat-config writer that preserves comments and hand-added keys
 
 **Sort vs. search:** fuzzy score always wins while a query is present; `SortMode` (recent/name/kind)
 only orders the resting, no-query list. Both paths honour the `GroupFilter`. Ties break on load
@@ -70,7 +75,8 @@ order so the list stays stable.
   both**, or the clone flow and the picker will diverge.
 - **Config parsing is intentionally flat.** Both `Config::load` (`src/data.rs`) and `toml_get`
   (`bin/lib.sh`) are hand-rolled line parsers — one `key = value` per line, no sections, no nesting.
-  Do not add a TOML crate or nested keys without changing both parsers and `bin/settings.sh`.
+  Do not add a TOML crate or nested keys without changing both parsers and the writer in
+  `src/settings.rs` (`write_setting`), which preserves comments and hand-added keys.
   Theme parsing (`[theme.custom]` from herdr's config) is a separate hand-rolled scanner.
 - **`jq` is optional.** Agents and workspaces degrade to repos-only without it. `bin/lib.sh` uses
   awk-based `json_string_value` / `json_bool_value` precisely to avoid a hard jq dependency in the
@@ -97,5 +103,6 @@ order so the list stays stable.
 
 Rustfmt defaults; `anyhow::Result` with typed errors; no `unwrap()` in production paths. Bash uses
 `#!/usr/bin/env bash`, `set -euo pipefail`, quoted expansions, and helpers from `bin/lib.sh`.
-TOML keys are snake_case; plugin action ids are kebab-case. Commits are short and imperative, often
-ending with a release tag like `(v0.4.0)`. Never commit `target/`.
+TOML keys are snake_case; plugin action ids are kebab-case. Commits are short and imperative;
+`bin/release.sh` makes the `Release vX.Y.Z` commit, so do not hand-tag subjects like `(v0.4.0)`
+the way pre-0.5.0 commits did. Never commit `target/`.

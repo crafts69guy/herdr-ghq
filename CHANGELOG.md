@@ -9,10 +9,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- The settings dashboard now opens as a session-modal popup sized to its content
-  (96×26) instead of a full-screen overlay, so it reads as the small form it is and
-  leaves the workspace visible behind it. Needs herdr ≥ 0.7.4, which is already the
-  declared minimum.
+- The settings dashboard is now part of the switcher's TUI instead of an fzf list, and
+  opens as a session-modal popup sized to its content rather than a full-screen overlay.
+  It reads as the form it is: no fuzzy prompt, no `16/16` match counter, and no border
+  label doubling herdr's own pane title. `↑`/`↓` walk it, `enter` cycles the value or
+  edits `split_ratio` in place, `esc` closes. Needs herdr ≥ 0.7.4, already the declared
+  minimum.
+
+### Fixed
+
+- All 16 settings are visible: the fzf dashboard cut off `notification_position` and
+  truncated the `preview_position` hint. A window too short to fit the form now scrolls
+  to keep the selection in view instead of silently hiding rows.
+- Opening the switcher no longer fails on machines without `fzf`. Nothing in the plugin
+  has used fzf since the settings dashboard moved into the TUI — the clone flow prompts
+  with `read` — but `bin/action.sh` still refused to start the picker without it.
+
+### Removed
+
+- `fzf` is no longer a dependency.
 
 ## [0.5.0] - 2026-07-16
 

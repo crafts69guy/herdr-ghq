@@ -26,4 +26,4 @@ if [[ ! -x "$BIN" ]]; then
   fi
 fi
 
-exec "$BIN"
+exec "$BIN" "$@"
