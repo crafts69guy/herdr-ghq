@@ -7,6 +7,7 @@ mod history;
 mod preview;
 mod ui;
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::env;
 use std::os::unix::process::CommandExt;
@@ -54,7 +55,13 @@ enum Flow {
 }
 
 impl App {
-    fn new(entries: Vec<Entry>, theme: Theme, cfg: Config, root: String, script_dir: String) -> Self {
+    fn new(
+        entries: Vec<Entry>,
+        theme: Theme,
+        cfg: Config,
+        root: String,
+        script_dir: String,
+    ) -> Self {
         let preview_enabled = cfg.get("preview", "enabled") != "disabled";
         let preview_position = cfg.get("preview_position", "right");
         let preview_pct = cfg
@@ -115,11 +122,13 @@ impl App {
                     continue;
                 }
                 buf.clear();
-                if let Some(score) = pat.score(Utf32Str::new(&e.search, &mut buf), &mut self.matcher) {
+                if let Some(score) =
+                    pat.score(Utf32Str::new(&e.search, &mut buf), &mut self.matcher)
+                {
                     scored.push((score, i));
                 }
             }
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.sort_by_key(|&(score, _)| Reverse(score));
             self.filtered = scored.into_iter().map(|(_, i)| i).collect();
         }
         self.selected = 0;
@@ -337,6 +346,11 @@ fn main() -> Result<()> {
         .map(|r| format!("{r}/bin"))
         .unwrap_or_else(|_| ".".into());
     let origin = env::var("GHQ_ORIGIN_PANE_ID").unwrap_or_default();
+    // Resolve where Enter lands a repo once, before `cfg` moves into the App.
+    let default_target = action::resolve_default_target(
+        action::forced_target().as_deref(),
+        &cfg.get("default_target", "workspace"),
+    );
 
     let entries = data::load(&cfg, &theme, &root);
     if entries.is_empty() {
@@ -354,7 +368,14 @@ fn main() -> Result<()> {
 
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
-        action::dispatch(entry, accept, &origin, &app.cfg, &script_dir)?;
+        action::dispatch(
+            entry,
+            accept,
+            &origin,
+            &app.cfg,
+            &script_dir,
+            &default_target,
+        )?;
         // Record recency only for successful opens (dispatch returned Ok above).
         if let Some(id) = id {
             match accept {
@@ -431,7 +452,12 @@ mod tests {
     #[test]
     fn group_filter_narrows_to_one_kind() {
         let e = sample();
-        let order = browse_order(&e, &HashMap::new(), GroupFilter::Only(Kind::Repo), SortMode::Name);
+        let order = browse_order(
+            &e,
+            &HashMap::new(),
+            GroupFilter::Only(Kind::Repo),
+            SortMode::Name,
+        );
         // only the two repos, alphabetical: mid(2), zeta(0)
         assert_eq!(order, vec![2, 0]);
     }

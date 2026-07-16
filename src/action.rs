@@ -1,6 +1,7 @@
 //! Accept dispatch — runs AFTER the TUI is torn down, so interactive bits
 //! (clone prompt, remove confirm, update output) use the normal pane.
 
+use std::env;
 use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -8,6 +9,29 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 
 use crate::data::{Config, Entry, Kind};
+
+/// The targets `open_repo` understands.
+fn is_open_target(t: &str) -> bool {
+    matches!(t, "workspace" | "tab" | "split" | "pane")
+}
+
+/// `GHQ_FORCE_TARGET`, set by `bin/action.sh` for the hot-path actions
+/// (`open-workspace` / `open-tab` / `open-split`) so a dedicated key always
+/// lands the repo in one place regardless of `default_target`.
+pub fn forced_target() -> Option<String> {
+    env::var("GHQ_FORCE_TARGET").ok().filter(|s| !s.is_empty())
+}
+
+/// Where Enter opens a repo: a forced target wins, then `default_target`.
+/// Unrecognised values on either side fall back to `workspace` rather than
+/// failing the open — the same leniency `bin/get.sh` applies.
+pub fn resolve_default_target(forced: Option<&str>, configured: &str) -> String {
+    forced
+        .filter(|t| is_open_target(t))
+        .or(Some(configured).filter(|t| is_open_target(t)))
+        .unwrap_or("workspace")
+        .to_string()
+}
 
 /// Which accept key was pressed.
 #[derive(Clone, Copy, PartialEq)]
@@ -29,10 +53,13 @@ pub fn dispatch(
     origin_pane: &str,
     cfg: &Config,
     script_dir: &str,
+    default_target: &str,
 ) -> Result<()> {
     if accept == Accept::Clone {
         // Hand the whole terminal to the bash clone flow.
-        let err = Command::new("bash").arg(format!("{script_dir}/get.sh")).exec();
+        let err = Command::new("bash")
+            .arg(format!("{script_dir}/get.sh"))
+            .exec();
         return Err(anyhow!("failed to exec get.sh: {err}"));
     }
 
@@ -50,10 +77,7 @@ pub fn dispatch(
         Kind::Repo => {
             let dir = e.dir.clone().unwrap_or_default();
             match accept {
-                Accept::Default => {
-                    let t = cfg.get("default_target", "workspace");
-                    open_repo(&t, &dir, origin_pane, &e.label, cfg)
-                }
+                Accept::Default => open_repo(default_target, &dir, origin_pane, &e.label, cfg),
                 Accept::Workspace => open_repo("workspace", &dir, origin_pane, &e.label, cfg),
                 Accept::Tab => open_repo("tab", &dir, origin_pane, &e.label, cfg),
                 Accept::Split => open_repo("split", &dir, origin_pane, &e.label, cfg),
@@ -94,7 +118,15 @@ fn open_repo(target: &str, path: &str, origin: &str, label: &str, cfg: &Config) 
         return Err(anyhow!("path no longer exists: {path}"));
     }
     match target {
-        "workspace" => herdr(&["workspace", "create", "--cwd", path, "--label", label, "--focus"]),
+        "workspace" => herdr(&[
+            "workspace",
+            "create",
+            "--cwd",
+            path,
+            "--label",
+            label,
+            "--focus",
+        ]),
         "tab" => herdr(&["tab", "create", "--cwd", path, "--label", label, "--focus"]),
         "split" => {
             let dir = cfg.get("split_direction", "right");
@@ -103,7 +135,15 @@ fn open_repo(target: &str, path: &str, origin: &str, label: &str, cfg: &Config) 
             if !origin.is_empty() {
                 args.push(origin);
             }
-            args.extend_from_slice(&["--direction", &dir, "--ratio", &ratio, "--cwd", path, "--focus"]);
+            args.extend_from_slice(&[
+                "--direction",
+                &dir,
+                "--ratio",
+                &ratio,
+                "--cwd",
+                path,
+                "--focus",
+            ]);
             herdr(&args)
         }
         "pane" => {
@@ -161,4 +201,56 @@ fn remove(path: &str, label: &str) -> Result<()> {
         println!("Aborted.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forced_target_overrides_the_configured_default() {
+        assert_eq!(resolve_default_target(Some("tab"), "workspace"), "tab");
+        assert_eq!(resolve_default_target(Some("split"), "pane"), "split");
+    }
+
+    /// The env var is the whole contract with `bin/action.sh`. Sole test that
+    /// touches `GHQ_FORCE_TARGET`, so the process-global set/remove is safe.
+    #[test]
+    fn forced_target_reads_the_env_var_action_sh_sets() {
+        env::set_var("GHQ_FORCE_TARGET", "tab");
+        assert_eq!(forced_target().as_deref(), Some("tab"));
+        assert_eq!(
+            resolve_default_target(forced_target().as_deref(), "workspace"),
+            "tab"
+        );
+
+        // `menu` opens the pane without the var: the config must win.
+        env::remove_var("GHQ_FORCE_TARGET");
+        assert_eq!(forced_target(), None);
+        assert_eq!(
+            resolve_default_target(forced_target().as_deref(), "workspace"),
+            "workspace"
+        );
+
+        // action.sh passes `--env GHQ_FORCE_TARGET=` when force_target is empty.
+        env::set_var("GHQ_FORCE_TARGET", "");
+        assert_eq!(forced_target(), None);
+        env::remove_var("GHQ_FORCE_TARGET");
+    }
+
+    #[test]
+    fn configured_default_applies_when_nothing_is_forced() {
+        assert_eq!(resolve_default_target(None, "pane"), "pane");
+    }
+
+    #[test]
+    fn unrecognised_values_fall_back_to_workspace() {
+        // A bad force never breaks the open; it defers to the config.
+        assert_eq!(resolve_default_target(Some("bogus"), "tab"), "tab");
+        // A bad config with no force lands on the documented default.
+        assert_eq!(resolve_default_target(None, "bogus"), "workspace");
+        assert_eq!(resolve_default_target(Some("bogus"), "bogus"), "workspace");
+        // An empty force is the unset case (`forced_target` filters it out).
+        assert_eq!(resolve_default_target(None, ""), "workspace");
+    }
 }
