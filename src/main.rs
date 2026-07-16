@@ -36,6 +36,7 @@ pub struct App {
     pub preview_position: String,
     pub preview_pct: u16,
     pub preview_scroll: u16,
+    pub show_help: bool,
 }
 
 enum Flow {
@@ -75,6 +76,7 @@ impl App {
             preview_position,
             preview_pct,
             preview_scroll: 0,
+            show_help: false,
         }
     }
 
@@ -131,8 +133,24 @@ impl App {
 fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(KeyModifiers::ALT);
+
+    // While the help popup is open, swallow every key: the first press just
+    // dismisses it (^c still quits, so you're never trapped).
+    if app.show_help {
+        if ctrl && matches!(k.code, KeyCode::Char('c')) {
+            return Flow::Quit;
+        }
+        app.show_help = false;
+        return Flow::Continue;
+    }
+
     match k.code {
         KeyCode::Esc => Flow::Quit,
+        // `?` (no modifiers) opens the keybindings cheatsheet.
+        KeyCode::Char('?') if !ctrl && !alt => {
+            app.show_help = true;
+            Flow::Continue
+        }
         KeyCode::Enter if alt => Flow::Accept(Accept::Clone),
         KeyCode::Enter => Flow::Accept(Accept::Default),
         KeyCode::Up => {

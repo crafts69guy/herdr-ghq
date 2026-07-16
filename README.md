@@ -9,6 +9,8 @@ Where a shell `ghq list | fzf | cd` can only change the current directory, this 
 herdr as a multiplexer: jump to a live agent, switch workspaces, or open a repo **where you
 want it** — a new workspace, tab, split, or the current pane.
 
+![The herdr-ghq switcher: a colourful fuzzy list with live preview and the `?` keybindings popup open](docs/switcher.png)
+
 ## Features
 
 - **One list, three sources.** Type-to-filter across agents (● colored by state),
@@ -34,6 +36,7 @@ want it** — a new workspace, tab, split, or the current pane.
   | `ctrl-u` | *(repo)* `ghq get -u` on the highlighted repo |
   | `ctrl-x` | *(repo)* remove it, behind a typed confirmation |
   | `alt-enter` | switch to the **clone** flow (`ghq get`) |
+  | `?` | toggle a **keybindings cheatsheet** popup (any key closes it) |
 
 - **A real TUI** (Rust, ratatui + nucleo) — not an fzf wrapper — so the layout is
   keifu-grade: a Search box on top, the Switcher list, a Preview pane below, and a

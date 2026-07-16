@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 use ratatui::Frame;
 
@@ -59,11 +59,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let title = app.title_color;
     draw_input(f, app, root[0], title, accent, sub, overlay);
-    draw_list(f, app, list_area, title, accent, text, sub, overlay, surface);
+    draw_list(f, app, list_area, title, accent, text, overlay, surface);
     if let Some(area) = preview_area {
         draw_preview(f, app, area, title, overlay);
     }
     draw_footer(f, app, root[2]);
+
+    if app.show_help {
+        draw_help(f, app, f.area());
+    }
 }
 
 fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
@@ -110,7 +114,6 @@ fn draw_list(
     title: Color,
     accent: Color,
     text: Color,
-    sub: Color,
     border: Color,
     surface: Color,
 ) {
@@ -125,12 +128,20 @@ fn draw_list(
             if plen < width {
                 primary.push_str(&" ".repeat(width - plen));
             }
+            // The secondary column carries the entry's own colour (host tint
+            // for repos, live state for agents, accent for workspaces) so the
+            // list reads as colourful at a glance instead of a wall of grey.
             ListItem::new(Line::from(vec![
                 Span::styled(e.icon.clone(), Style::default().fg(e.icon_color)),
                 Span::raw(" "),
                 Span::styled(primary, Style::default().fg(text)),
                 Span::raw(" "),
-                Span::styled(e.secondary.clone(), Style::default().fg(sub)),
+                Span::styled(
+                    e.secondary.clone(),
+                    Style::default()
+                        .fg(e.icon_color)
+                        .add_modifier(Modifier::DIM),
+                ),
             ]))
         })
         .collect();
@@ -165,7 +176,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     // Dark ink for text sitting on the coloured pills.
     let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
-    let keys: [(&str, &str, Color); 9] = [
+    let keys: [(&str, &str, Color); 10] = [
         ("↵", "open", t.or("accent", Color::Cyan)),
         ("^t", "tab", t.or("green", Color::Green)),
         ("^s", "split", t.or("yellow", Color::Yellow)),
@@ -175,6 +186,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ("^u", "update", t.or("teal", Color::Cyan)),
         ("^x", "remove", t.or("red", Color::Red)),
         ("⌥↵", "clone", t.or("blue", Color::Magenta)),
+        ("?", "help", t.or("lavender", Color::White)),
     ];
     let mut spans = vec![Span::raw(" ")];
     for (key, label, color) in keys.iter() {
@@ -193,4 +205,106 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::raw(" "));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// A centred, colourful keybindings cheatsheet drawn on top of everything.
+fn draw_help(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
+    let text = t.or("text", Color::Reset);
+    let sub = t.or("subtext0", Color::Gray);
+    let title = app.title_color;
+    let border = t.or("accent", Color::Cyan);
+
+    // A row: a colour-filled key pill followed by its description.
+    let row = |key: &str, color: Color, desc: &str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(
+                format!(" {key:<8}"),
+                Style::default().bg(color).fg(ink).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(desc.to_string(), Style::default().fg(text)),
+        ])
+    };
+    let head = |s: &str| -> Line<'static> {
+        Line::from(Span::styled(
+            s.to_string(),
+            Style::default().fg(title).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let blank = || Line::from("");
+
+    let green = t.or("green", Color::Green);
+    let yellow = t.or("yellow", Color::Yellow);
+    let blue = t.or("blue", Color::Blue);
+    let mauve = t.or("mauve", Color::Magenta);
+    let peach = t.or("peach", Color::Yellow);
+    let teal = t.or("teal", Color::Cyan);
+    let red = t.or("red", Color::Red);
+
+    let left = vec![
+        head(" Navigate"),
+        row("↑ / ↓", border, "Move selection"),
+        row("^j / ^k", border, "Down / up (vim)"),
+        row("^n / ^p", border, "Down / up (emacs)"),
+        row("PgUp/Dn", border, "Jump by 10"),
+        row("type…", green, "Fuzzy filter"),
+        row("⌫", sub, "Delete a character"),
+        blank(),
+        head(" General"),
+        row("?", title, "Toggle this help"),
+        row("Esc", red, "Close / quit"),
+        row("^c", red, "Quit"),
+    ];
+    let right = vec![
+        head(" Open"),
+        row("↵", border, "Open (default)"),
+        row("⌥↵", blue, "Clone repo"),
+        row("^t", green, "Open in new tab"),
+        row("^s", yellow, "Open in split"),
+        row("^o", blue, "cd pane here"),
+        blank(),
+        head(" Manage"),
+        row("^w", mauve, "Send to workspace"),
+        row("^g", peach, "Git actions"),
+        row("^u", teal, "Update repo"),
+        row("^x", red, "Remove"),
+    ];
+
+    // Centre a comfortably sized popup within the screen.
+    let w = area.width.saturating_sub(6).clamp(40, 64);
+    let want_h = left.len().max(right.len()) as u16 + 4;
+    let h = want_h.min(area.height.saturating_sub(2)).max(8);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let popup = Rect::new(x, y, w, h);
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(ink))
+        .title(Span::styled(
+            "  Keybindings ",
+            Style::default().fg(title).add_modifier(Modifier::BOLD),
+        ))
+        .title(
+            Line::from(Span::styled(
+                " any key to close ",
+                Style::default().fg(sub),
+            ))
+            .right_aligned(),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .horizontal_margin(1)
+        .vertical_margin(1)
+        .split(inner);
+    f.render_widget(Paragraph::new(left), cols[0]);
+    f.render_widget(Paragraph::new(right), cols[1]);
 }
