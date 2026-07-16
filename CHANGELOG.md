@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-16
+
 ### Changed
 
 - Previews now render on a worker thread instead of between a keypress and the next
@@ -160,7 +162,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open it in a new workspace, tab, split, or the current pane, plus clone (`ghq get`),
   update, remove, and a handoff to the git-hub menu.
 
-[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/crafts69guy/herdr-ghq/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/crafts69guy/herdr-ghq/compare/v0.3.2...v0.3.3
