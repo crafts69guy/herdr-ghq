@@ -128,6 +128,81 @@ pub enum Kind {
     Repo,
 }
 
+impl Kind {
+    /// Stable ordering used by the "Kind" sort (agents first, repos last).
+    pub fn order(self) -> u8 {
+        match self {
+            Kind::Agent => 0,
+            Kind::Workspace => 1,
+            Kind::Repo => 2,
+        }
+    }
+}
+
+/// How the no-query browse list is ordered. Fuzzy score always wins while the
+/// user is typing; this only decides the resting order.
+#[derive(Clone, Copy, PartialEq)]
+pub enum SortMode {
+    /// Latest opened first (default), from the recency history file.
+    Recent,
+    /// Alphabetical by the primary column.
+    Name,
+    /// Grouped by kind: agents, then workspaces, then repos.
+    Kind,
+}
+
+impl SortMode {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "name" => SortMode::Name,
+            "kind" => SortMode::Kind,
+            _ => SortMode::Recent,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            SortMode::Recent => SortMode::Name,
+            SortMode::Name => SortMode::Kind,
+            SortMode::Kind => SortMode::Recent,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortMode::Recent => "recent",
+            SortMode::Name => "name",
+            SortMode::Kind => "kind",
+        }
+    }
+}
+
+/// Which group the list is narrowed to. `All` blends every source.
+#[derive(Clone, Copy, PartialEq)]
+pub enum GroupFilter {
+    All,
+    Only(Kind),
+}
+
+impl GroupFilter {
+    /// Does `kind` pass this filter?
+    pub fn matches(self, kind: Kind) -> bool {
+        match self {
+            GroupFilter::All => true,
+            GroupFilter::Only(k) => k == kind,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupFilter::All => "All",
+            GroupFilter::Only(Kind::Agent) => "Agents",
+            GroupFilter::Only(Kind::Workspace) => "Workspaces",
+            GroupFilter::Only(Kind::Repo) => "Repos",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Entry {
     pub kind: Kind,

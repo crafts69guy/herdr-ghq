@@ -3,9 +3,11 @@
 
 mod action;
 mod data;
+mod history;
 mod preview;
 mod ui;
 
+use std::collections::HashMap;
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -17,7 +19,7 @@ use nucleo_matcher::{Config as NucleoConfig, Matcher, Utf32Str};
 use ratatui::text::Text;
 
 use action::Accept;
-use data::{Config, Entry, Theme};
+use data::{Config, Entry, GroupFilter, Kind, SortMode, Theme};
 
 pub struct App {
     pub entries: Vec<Entry>,
@@ -37,6 +39,12 @@ pub struct App {
     pub preview_pct: u16,
     pub preview_scroll: u16,
     pub show_help: bool,
+    pub group: GroupFilter,
+    pub sort: SortMode,
+    /// id → last-opened epoch, for the Recent sort.
+    recent: HashMap<String, u64>,
+    /// Kinds actually present, in tab order — drives group cycling + the strip.
+    pub present_kinds: Vec<Kind>,
 }
 
 enum Flow {
@@ -58,10 +66,15 @@ impl App {
         let title_color = theme
             .resolve(&cfg.get("title_color", "peach"))
             .unwrap_or_else(|| theme.or("accent", ratatui::style::Color::Cyan));
-        let filtered = (0..entries.len()).collect();
-        App {
+        let sort = SortMode::parse(&cfg.get("sort", "recent"));
+        let recent = history::load();
+        let present_kinds = [Kind::Agent, Kind::Workspace, Kind::Repo]
+            .into_iter()
+            .filter(|&k| entries.iter().any(|e| e.kind == k))
+            .collect();
+        let mut app = App {
             entries,
-            filtered,
+            filtered: Vec::new(),
             selected: 0,
             query: String::new(),
             matcher: Matcher::new(NucleoConfig::DEFAULT),
@@ -77,17 +90,30 @@ impl App {
             preview_pct,
             preview_scroll: 0,
             show_help: false,
-        }
+            group: GroupFilter::All,
+            sort,
+            recent,
+            present_kinds,
+        };
+        // Apply the initial sort (Recent by default) to the resting list.
+        app.recompute();
+        app
     }
 
     fn recompute(&mut self) {
+        let group = self.group;
         if self.query.is_empty() {
-            self.filtered = (0..self.entries.len()).collect();
+            // Browse mode: filter by group, then order by the active sort.
+            self.filtered = browse_order(&self.entries, &self.recent, group, self.sort);
         } else {
+            // Search mode: fuzzy score wins; group still narrows the candidates.
             let pat = Pattern::parse(&self.query, CaseMatching::Smart, Normalization::Smart);
             let mut buf = Vec::new();
             let mut scored: Vec<(u32, usize)> = Vec::new();
             for (i, e) in self.entries.iter().enumerate() {
+                if !group.matches(e.kind) {
+                    continue;
+                }
                 buf.clear();
                 if let Some(score) = pat.score(Utf32Str::new(&e.search, &mut buf), &mut self.matcher) {
                     scored.push((score, i));
@@ -97,6 +123,33 @@ impl App {
             self.filtered = scored.into_iter().map(|(_, i)| i).collect();
         }
         self.selected = 0;
+    }
+
+    /// The tab strip in order: All, then each present kind.
+    pub fn tabs(&self) -> Vec<GroupFilter> {
+        let mut v = vec![GroupFilter::All];
+        v.extend(self.present_kinds.iter().map(|&k| GroupFilter::Only(k)));
+        v
+    }
+
+    /// Move to the next/previous non-empty group (wraps).
+    fn cycle_group(&mut self, dir: i32) {
+        let tabs = self.tabs();
+        if tabs.len() < 2 {
+            return;
+        }
+        let cur = tabs.iter().position(|&g| g == self.group).unwrap_or(0) as i32;
+        let next = (cur + dir).rem_euclid(tabs.len() as i32);
+        self.group = tabs[next as usize];
+        self.recompute();
+    }
+
+    fn toggle_preview(&mut self) {
+        self.preview_enabled = !self.preview_enabled;
+        if self.preview_enabled {
+            // Force update_preview to rebuild for the current selection.
+            self.preview_id.clear();
+        }
     }
 
     fn move_sel(&mut self, delta: i32) {
@@ -130,6 +183,41 @@ impl App {
     }
 }
 
+/// The no-query browse order: entries passing `group`, ordered by `sort`.
+/// Ties break on original load order so the list is stable.
+fn browse_order(
+    entries: &[Entry],
+    recent: &HashMap<String, u64>,
+    group: GroupFilter,
+    sort: SortMode,
+) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..entries.len())
+        .filter(|&i| group.matches(entries[i].kind))
+        .collect();
+    match sort {
+        SortMode::Recent => idx.sort_by(|&a, &b| {
+            let ra = recent.get(&entries[a].id).copied().unwrap_or(0);
+            let rb = recent.get(&entries[b].id).copied().unwrap_or(0);
+            rb.cmp(&ra).then(a.cmp(&b))
+        }),
+        SortMode::Name => idx.sort_by(|&a, &b| {
+            entries[a]
+                .primary
+                .to_lowercase()
+                .cmp(&entries[b].primary.to_lowercase())
+                .then(a.cmp(&b))
+        }),
+        SortMode::Kind => idx.sort_by(|&a, &b| {
+            entries[a]
+                .kind
+                .order()
+                .cmp(&entries[b].kind.order())
+                .then(a.cmp(&b))
+        }),
+    }
+    idx
+}
+
 fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(KeyModifiers::ALT);
@@ -149,6 +237,25 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
         // `?` (no modifiers) opens the keybindings cheatsheet.
         KeyCode::Char('?') if !ctrl && !alt => {
             app.show_help = true;
+            Flow::Continue
+        }
+        // Tab / Shift-Tab cycle the group filter (skipping empty groups).
+        KeyCode::Tab => {
+            app.cycle_group(1);
+            Flow::Continue
+        }
+        KeyCode::BackTab => {
+            app.cycle_group(-1);
+            Flow::Continue
+        }
+        // Alt-p toggles the preview pane; Alt-s cycles the sort order.
+        KeyCode::Char('p') if alt => {
+            app.toggle_preview();
+            Flow::Continue
+        }
+        KeyCode::Char('s') if alt => {
+            app.sort = app.sort.next();
+            app.recompute();
             Flow::Continue
         }
         KeyCode::Enter if alt => Flow::Accept(Accept::Clone),
@@ -246,7 +353,86 @@ fn main() -> Result<()> {
     ratatui::restore();
 
     if let Some((entry, accept)) = outcome? {
+        let id = entry.as_ref().map(|e| e.id.clone());
         action::dispatch(entry, accept, &origin, &app.cfg, &script_dir)?;
+        // Record recency only for successful opens (dispatch returned Ok above).
+        if let Some(id) = id {
+            match accept {
+                Accept::Default
+                | Accept::Workspace
+                | Accept::Tab
+                | Accept::Split
+                | Accept::Pane
+                | Accept::Git => history::touch(&id),
+                Accept::Remove => history::forget(&id),
+                Accept::Update | Accept::Clone => {}
+            }
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use data::Kind;
+    use ratatui::style::Color;
+
+    fn entry(kind: Kind, id: &str, primary: &str) -> Entry {
+        Entry {
+            kind,
+            id: id.into(),
+            dir: None,
+            label: primary.into(),
+            icon: String::new(),
+            icon_color: Color::Reset,
+            primary: primary.into(),
+            secondary: String::new(),
+            search: primary.into(),
+        }
+    }
+
+    fn sample() -> Vec<Entry> {
+        vec![
+            entry(Kind::Repo, "gh/zeta", "zeta"),
+            entry(Kind::Agent, "term-1", "alpha"),
+            entry(Kind::Repo, "gh/mid", "mid"),
+            entry(Kind::Workspace, "ws-1", "work"),
+        ]
+    }
+
+    #[test]
+    fn recent_sort_puts_latest_opened_first() {
+        let e = sample();
+        let mut recent = HashMap::new();
+        recent.insert("gh/mid".to_string(), 100u64);
+        recent.insert("term-1".to_string(), 200u64);
+        let order = browse_order(&e, &recent, GroupFilter::All, SortMode::Recent);
+        // term-1 (200) then gh/mid (100), then the untouched two in load order.
+        assert_eq!(order, vec![1, 2, 0, 3]);
+    }
+
+    #[test]
+    fn name_sort_is_alphabetical() {
+        let e = sample();
+        let order = browse_order(&e, &HashMap::new(), GroupFilter::All, SortMode::Name);
+        // alpha, mid, work, zeta
+        assert_eq!(order, vec![1, 2, 3, 0]);
+    }
+
+    #[test]
+    fn kind_sort_groups_agents_then_workspaces_then_repos() {
+        let e = sample();
+        let order = browse_order(&e, &HashMap::new(), GroupFilter::All, SortMode::Kind);
+        // agent(1), workspace(3), repos in load order(0,2)
+        assert_eq!(order, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn group_filter_narrows_to_one_kind() {
+        let e = sample();
+        let order = browse_order(&e, &HashMap::new(), GroupFilter::Only(Kind::Repo), SortMode::Name);
+        // only the two repos, alphabetical: mid(2), zeta(0)
+        assert_eq!(order, vec![2, 0]);
+    }
 }

@@ -18,25 +18,38 @@ want it** — a new workspace, tab, split, or the current pane.
   context — repos drop the repeated `host/owner/` prefix for a clean, scannable list.
 - **Kind-aware accept:**
 
-  | Highlighted | `enter` |
-  |-------------|---------|
-  | **agent** | jump to it (`herdr agent focus`) |
-  | **workspace** | switch to it (`herdr workspace focus`) |
-  | **repo** | open in the default target (a new **workspace**, unless overridden) |
+  | Highlighted   | `enter`                                                             |
+  | ------------- | ------------------------------------------------------------------- |
+  | **agent**     | jump to it (`herdr agent focus`)                                    |
+  | **workspace** | switch to it (`herdr workspace focus`)                              |
+  | **repo**      | open in the default target (a new **workspace**, unless overridden) |
 
 - **For repos (and an agent's cwd), choose where it lands:**
 
-  | Key | Opens in… |
-  |-----|-----------|
-  | `ctrl-w` | a new **workspace** |
-  | `ctrl-t` | a new **tab** |
-  | `ctrl-s` | a **split** of the current pane |
-  | `ctrl-o` | the **current pane** (`cd`) |
-  | `ctrl-g` | a new tab, then hands off to the **git-hub** menu |
-  | `ctrl-u` | *(repo)* `ghq get -u` on the highlighted repo |
-  | `ctrl-x` | *(repo)* remove it, behind a typed confirmation |
-  | `alt-enter` | switch to the **clone** flow (`ghq get`) |
-  | `?` | toggle a **keybindings cheatsheet** popup (any key closes it) |
+  | Key         | Opens in…                                         |
+  | ----------- | ------------------------------------------------- |
+  | `ctrl-w`    | a new **workspace**                               |
+  | `ctrl-t`    | a new **tab**                                     |
+  | `ctrl-s`    | a **split** of the current pane                   |
+  | `ctrl-o`    | the **current pane** (`cd`)                       |
+  | `ctrl-g`    | a new tab, then hands off to the **git-hub** menu |
+  | `ctrl-u`    | _(repo)_ `ghq get -u` on the highlighted repo     |
+  | `ctrl-x`    | _(repo)_ remove it, behind a typed confirmation   |
+  | `alt-enter` | switch to the **clone** flow (`ghq get`)          |
+
+- **Browse controls** — shape the list without leaving your keyboard:
+
+  | Key                 | Does                                                                                                                                     |
+  | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+  | `tab` / `shift-tab` | cycle the **group** filter — All → Agents → Workspaces → Repos (empty groups are skipped); the active tab is shown in the Switcher title |
+  | `alt-s`             | cycle the **sort**: `recent` (latest opened) → `name` → `kind`                                                                           |
+  | `alt-p`             | **toggle** the preview pane on/off                                                                                                       |
+  | `?`                 | toggle a **keybindings cheatsheet** popup (any key closes it)                                                                            |
+
+  The **default sort is `recent`** — repos you opened most recently float to the top.
+  Opens are remembered in `${XDG_STATE_HOME:-~/.local/state}/herdr-ghq/recent.tsv`.
+  While you're typing, fuzzy match score orders the list; sort applies to the resting
+  (no-query) list. Set the startup default with `sort = "recent" | "name" | "kind"`.
 
 - **A real TUI** (Rust, ratatui + nucleo) — not an fzf wrapper — so the layout is
   keifu-grade: a Search box on top, the Switcher list, a Preview pane below, and a
@@ -96,6 +109,7 @@ the `ghq.settings` action. See `examples/config.toml` for every key; highlights:
 
 - `default_target` — `workspace` (default) · `tab` · `split` · `pane`
 - `include_agents` / `include_workspaces` — blend agents/workspaces into the list (needs `jq`)
+- `sort` — resting list order: `recent` (default) · `name` · `kind` (cycle live with `alt-s`)
 - `label` — workspace/tab label: `repo` · `owner-repo` · `path`
 - `preview` / `preview_readme` — the preview pane
 - `clone_source` — seed the clone prompt from the `clipboard` (default) or start blank

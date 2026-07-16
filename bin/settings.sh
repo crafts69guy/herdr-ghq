@@ -23,6 +23,7 @@ SETTINGS=(
   "label|repo|workspace/tab label style"
   "include_agents|true|list running agents in the switcher"
   "include_workspaces|true|list open workspaces in the switcher"
+  "sort|recent|resting list order (recent/name/kind)"
   "title_color|peach|box title colour (theme slot or #hex)"
   "preview|enabled|show the preview pane"
   "preview_position|down|down = full-width footer; right = side-by-side"
@@ -58,6 +59,8 @@ cycle() {
     split_direction) [[ "$cur" == right ]] && echo down || echo right ;;
     label)
       case "$cur" in repo) echo owner-repo ;; owner-repo) echo path ;; *) echo repo ;; esac ;;
+    sort)
+      case "$cur" in recent) echo name ;; name) echo kind ;; *) echo recent ;; esac ;;
     preview) [[ "$cur" == enabled ]] && echo disabled || echo enabled ;;
     preview_position) [[ "$cur" == down ]] && echo right || echo down ;;
     title_color)

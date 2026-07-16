@@ -146,8 +146,32 @@ fn draw_list(
         })
         .collect();
 
+    // Title row = a group tab strip (All + each present kind) with the active
+    // tab highlighted, plus a right-aligned sort indicator.
+    let ink = app.theme.or("panel_bg", Color::Rgb(16, 18, 20));
+    let mut tab_spans: Vec<Span> = Vec::new();
+    for g in app.tabs() {
+        let style = if g == app.group {
+            Style::default().fg(ink).bg(title).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(border)
+        };
+        tab_spans.push(Span::styled(format!(" {} ", g.label()), style));
+        tab_spans.push(Span::raw(" "));
+    }
+    let sort_hint = Span::styled(
+        format!(" sort: {} ", app.sort.label()),
+        Style::default().fg(border),
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .title(Line::from(tab_spans))
+        .title(Line::from(sort_hint).right_aligned());
+
     let list = List::new(items)
-        .block(boxed("Switcher", title, border))
+        .block(block)
         .highlight_symbol("▌ ")
         .highlight_style(
             Style::default()
@@ -249,6 +273,8 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         row("^j / ^k", border, "Down / up (vim)"),
         row("^n / ^p", border, "Down / up (emacs)"),
         row("PgUp/Dn", border, "Jump by 10"),
+        row("Tab", teal, "Next group"),
+        row("⇧Tab", teal, "Prev group"),
         row("type…", green, "Fuzzy filter"),
         row("⌫", sub, "Delete a character"),
         blank(),
@@ -270,6 +296,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         row("^g", peach, "Git actions"),
         row("^u", teal, "Update repo"),
         row("^x", red, "Remove"),
+        blank(),
+        head(" View"),
+        row("⌥s", blue, "Cycle sort order"),
+        row("⌥p", mauve, "Toggle preview"),
     ];
 
     // Centre a comfortably sized popup within the screen.

@@ -18,6 +18,9 @@ label = "repo"
 include_agents = "true"       # running herdr agents (enter = jump to them)
 include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
 
+# Resting list order (no query). Cycle live with alt-s; Tab narrows to a group.
+sort = "recent"               # recent (latest opened) | name | kind
+
 # Box title colour: a [theme.custom] slot name (accent, peach, mauve, teal, …)
 # or a literal #rrggbb.
 title_color = "peach"
