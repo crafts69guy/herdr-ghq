@@ -1,0 +1,24 @@
+[package]
+name = "herdr-ghq-switcher"
+version = "0.3.0"
+edition = "2021"
+description = "Unified herdr switcher TUI: fuzzy-jump across agents, workspaces, and ghq repos."
+license = "MIT"
+
+[[bin]]
+name = "herdr-ghq-switcher"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+serde_json = "1"
+nucleo-matcher = "0.3"
+ansi-to-tui = "7"
+anyhow = "1"
+
+# Favour a fast first-run build (the wrapper builds on demand) over a maximally
+# small binary; still strip symbols to keep it lean.
+[profile.release]
+opt-level = "s"
+strip = true

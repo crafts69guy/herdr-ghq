@@ -35,6 +35,9 @@ want it** — a new workspace, tab, split, or the current pane.
   | `ctrl-x` | *(repo)* remove it, behind a typed confirmation |
   | `alt-enter` | switch to the **clone** flow (`ghq get`) |
 
+- **A real TUI** (Rust, ratatui + nucleo) — not an fzf wrapper — so the layout is
+  keifu-grade: a Search box on top, the Switcher list, a Preview pane below, and a
+  **full-width colourful command bar pinned to the very bottom**.
 - **Themed** from herdr's `[theme.custom]` so it matches your terminal, with a kind-aware
   preview: repos show branch · dirty/clean · last commit + a file tree + README; agents
   show status and recent output; workspaces show their tabs and panes.
@@ -49,10 +52,12 @@ want it** — a new workspace, tab, split, or the current pane.
 ## Requirements
 
 - herdr ≥ 0.7.4
-- [`ghq`](https://github.com/x-motemen/ghq) and [`fzf`](https://github.com/junegunn/fzf)
-- Optional: [`jq`](https://jqlang.github.io/jq/) (agents + workspaces in the list),
-  [`eza`](https://github.com/eza-community/eza) (richer preview tree),
-  the [`git-hub`](https://github.com/crafts69guy/herdr-git-hub) plugin (`ctrl-g` handoff)
+- [`ghq`](https://github.com/x-motemen/ghq)
+- [Rust / `cargo`](https://rustup.rs) — the switcher TUI is built on demand the first
+  time you open it (`brew install rust`)
+- Optional: [`eza`](https://github.com/eza-community/eza) (richer preview tree),
+  the [`git-hub`](https://github.com/crafts69guy/herdr-git-hub) plugin (`ctrl-g` handoff).
+  The `get`/`settings` actions still use `fzf`.
 
 ## Install
 
@@ -96,13 +101,15 @@ the `ghq.settings` action. See `examples/config.toml` for every key; highlights:
 ## How it works
 
 Each action (`bin/action.sh`) captures the origin pane id and cwd, then opens an overlay
-pane (`picker`, `get`, or `settings`). The picker builds one tab-delimited list from
-`herdr agent list`, `herdr workspace list`, and `ghq list` (only the pretty column is
-shown and searched; the kind/id/dir travel in hidden fields), and maps the accepted key
-to a herdr CLI verb — `agent focus` / `workspace focus` / `workspace create` /
-`tab create` / `pane split` / `pane send-text` — always targeting the captured origin
-pane or a real id from herdr, never a guessed one. Removal (`ctrl-x`) is the only
-destructive path and always requires typing the repo name to confirm.
+pane (`picker`, `get`, or `settings`). The picker is a Rust TUI (`src/`, built to
+`target/release/herdr-ghq-switcher` by `bin/picker.sh` on first run) that reads
+`herdr agent list`, `herdr workspace list`, and `ghq list`, fuzzy-filters with nucleo,
+and previews the selection (reusing `bin/preview.sh`). On accept it maps the key to a
+herdr CLI verb — `agent focus` / `workspace focus` / `workspace create` / `tab create` /
+`pane split` / `pane send-text` — always targeting the captured origin pane or a real id
+from herdr, never a guessed one. Clone/settings stay as bash (`bin/get.sh`,
+`bin/settings.sh`). Removal (`ctrl-x`) is the only destructive path and always requires
+typing the repo name to confirm.
 
 ## License
 
