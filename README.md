@@ -1,6 +1,9 @@
 # herdr-ghq
 
-[![CI](https://github.com/crafts69guy/herdr-ghq/actions/workflows/ci.yml/badge.svg)](https://github.com/crafts69guy/herdr-ghq/actions/workflows/ci.yml)
+![herdr 0.7.4+](https://img.shields.io/badge/herdr-0.7.4%2B-lightgrey)
+![ghq required](https://img.shields.io/badge/ghq-required-green)
+![platform macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+![license MIT](https://img.shields.io/badge/license-MIT-green)
 
 A [herdr](https://herdr.dev) plugin that puts your running **agents**, open **workspaces**,
 and every [`ghq`](https://github.com/x-motemen/ghq) **repository** in one fuzzy switcher —
