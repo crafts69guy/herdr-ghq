@@ -25,13 +25,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .split(f.area());
 
-    // Body: list on top, preview below.
+    // Body: list + preview. The footer (root[2]) is always a separate full-width
+    // row, so the preview can sit on any side without shrinking the command bar.
+    let body = root[1];
     let (list_area, preview_area) = if app.preview_enabled {
-        let b = Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(root[1]);
-        (b[0], Some(b[1]))
+        let pct = app.preview_pct;
+        let rest = 100u16.saturating_sub(pct);
+        match app.preview_position.as_str() {
+            "right" => {
+                let c = Layout::horizontal([Constraint::Percentage(rest), Constraint::Percentage(pct)])
+                    .split(body);
+                (c[0], Some(c[1]))
+            }
+            "left" => {
+                let c = Layout::horizontal([Constraint::Percentage(pct), Constraint::Percentage(rest)])
+                    .split(body);
+                (c[1], Some(c[0]))
+            }
+            "up" => {
+                let c = Layout::vertical([Constraint::Percentage(pct), Constraint::Percentage(rest)])
+                    .split(body);
+                (c[1], Some(c[0]))
+            }
+            _ => {
+                let c = Layout::vertical([Constraint::Percentage(rest), Constraint::Percentage(pct)])
+                    .split(body);
+                (c[0], Some(c[1]))
+            }
+        }
     } else {
-        (root[1], None)
+        (body, None)
     };
 
     draw_input(f, app, root[0], accent, sub, overlay);

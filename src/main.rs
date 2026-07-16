@@ -32,6 +32,8 @@ pub struct App {
     pub preview: Text<'static>,
     preview_id: String,
     pub preview_enabled: bool,
+    pub preview_position: String,
+    pub preview_pct: u16,
     pub preview_scroll: u16,
 }
 
@@ -44,6 +46,13 @@ enum Flow {
 impl App {
     fn new(entries: Vec<Entry>, theme: Theme, cfg: Config, root: String, script_dir: String) -> Self {
         let preview_enabled = cfg.get("preview", "enabled") != "disabled";
+        let preview_position = cfg.get("preview_position", "right");
+        let preview_pct = cfg
+            .get("preview_size", "52%")
+            .trim_end_matches('%')
+            .parse::<u16>()
+            .unwrap_or(52)
+            .clamp(20, 80);
         let filtered = (0..entries.len()).collect();
         App {
             entries,
@@ -58,6 +67,8 @@ impl App {
             preview: Text::default(),
             preview_id: String::new(),
             preview_enabled,
+            preview_position,
+            preview_pct,
             preview_scroll: 0,
         }
     }
