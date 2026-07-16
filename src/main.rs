@@ -2,6 +2,7 @@
 //! repos) with fuzzy search, a live preview, and a full-width command bar.
 
 mod action;
+mod changelog;
 mod data;
 mod history;
 mod preview;
@@ -435,8 +436,11 @@ fn run(
 fn main() -> Result<()> {
     // One binary, one mode per entrypoint: bin/settings.sh execs us with --settings so
     // both dashboards share this build, the theme, and the flat config reader.
-    if env::args().skip(1).any(|a| a == "--settings") {
-        return settings::main();
+    let mode = env::args().skip(1).find(|a| a.starts_with("--"));
+    match mode.as_deref() {
+        Some("--settings") => return settings::main(),
+        Some("--changelog") => return changelog::main(),
+        _ => {}
     }
 
     let cfg = Config::load();

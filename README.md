@@ -98,8 +98,8 @@ description = "Project switcher (ghq)"
 herdr server reload-config
 ```
 
-Press `prefix+space` to open the picker. `ghq.get` opens the clone flow directly, and
-`ghq.settings` opens the settings dashboard.
+Press `prefix+space` to open the picker. `ghq.get` opens the clone flow directly,
+`ghq.settings` opens the settings dashboard, and `ghq.changelog` shows what changed.
 
 ## Configuration
 
@@ -118,22 +118,27 @@ the `ghq.settings` action. See `examples/config.toml` for every key; highlights:
 ## How it works
 
 Each action (`bin/action.sh`) captures the origin pane id and cwd, then opens a pane —
-an overlay for `picker` and `get`, a session-modal popup for `settings`. The picker is a
+an overlay for `picker` and `get`, a session-modal popup for `settings` and `changelog`.
+The picker is a
 Rust TUI (`src/`, built to
 `target/release/herdr-ghq-switcher` by `bin/picker.sh` on first run) that reads
 `herdr agent list`, `herdr workspace list`, and `ghq list`, fuzzy-filters with nucleo,
 and previews the selection (reusing `bin/preview.sh`). On accept it maps the key to a
 herdr CLI verb — `agent focus` / `workspace focus` / `workspace create` / `tab create` /
 `pane split` / `pane send-text` — always targeting the captured origin pane or a real id
-from herdr, never a guessed one. The settings dashboard is the same binary in
-`--settings` mode (`bin/settings.sh` execs `bin/picker.sh --settings`, reusing its
-on-demand build); only the clone flow is still bash (`bin/get.sh`). Removal (`ctrl-x`)
-is the only destructive path and always requires typing the repo name to confirm.
+from herdr, never a guessed one. The settings dashboard and the changelog viewer are the
+same binary in `--settings` / `--changelog` mode (their `bin/` scripts exec
+`bin/picker.sh` with the flag, reusing its on-demand build); only the clone flow is still
+bash (`bin/get.sh`). Removal (`ctrl-x`) is the only destructive path and always requires
+typing the repo name to confirm.
 
 ## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md). Releases are tagged `vX.Y.Z`; to update an installed
-copy, re-run the install command — it re-fetches the ref:
+Run the `ghq.changelog` action to read it in a popup, with the version you are running
+marked — or see [`CHANGELOG.md`](CHANGELOG.md).
+
+Releases are tagged `vX.Y.Z`; to update an installed copy, re-run the install command —
+it re-fetches the ref:
 
 ```sh
 herdr plugin install crafts69guy/herdr-ghq

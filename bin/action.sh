@@ -19,6 +19,7 @@ case "$ACTION_ID" in
   open-split) entrypoint="picker"; force_target="split" ;;
   get) entrypoint="get" ;;
   settings) entrypoint="settings" ;;
+  changelog) entrypoint="changelog" ;;
   *) die "Ghq received an unsupported action. Check plugin logs." "unknown plugin action '$ACTION_ID'" ;;
 esac
 
@@ -36,6 +37,8 @@ cwd=""
 placement=(--placement overlay)
 case "$entrypoint" in
   settings) placement=(--placement popup --width 88 --height 19) ;;
+  # The changelog scrolls, so height is comfort rather than a fit.
+  changelog) placement=(--placement popup --width 88 --height 28) ;;
 esac
 
 command=("$(herdr_bin)" plugin pane open --plugin ghq --entrypoint "$entrypoint" "${placement[@]}")

@@ -26,6 +26,13 @@ description = "Edit Ghq switcher settings in a themed dashboard."
 contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
+[[actions]]
+id = "changelog"
+title = "Ghq Changelog"
+description = "Read what changed in this plugin, including the version you have installed."
+contexts = ["global", "pane"]
+command = ["bash", "bin/action.sh"]
+
 # Optional hot-path actions: open the picker with the Enter target forced, so a
 # dedicated key always lands the chosen repo in a workspace / tab / split.
 [[actions]]
@@ -68,3 +75,11 @@ placement = "popup"
 width = 88
 height = 19
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]
+
+[[panes]]
+id = "changelog"
+title = "Ghq Changelog"
+placement = "popup"
+width = 88
+height = 28
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/changelog.sh\""]

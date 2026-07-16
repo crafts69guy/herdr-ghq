@@ -7,6 +7,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A **changelog viewer**: the `ghq.changelog` action opens this file as a popup, in the
+  switcher's colours, with the version you are running marked `← installed`. It reads
+  the `CHANGELOG.md` that ships beside the plugin, so it needs no network and always
+  describes the code you actually have.
+
 ### Changed
 
 - The settings dashboard is now part of the switcher's TUI instead of an fzf list, and

@@ -39,9 +39,10 @@ assert_rooted_pane_command() {
 assert_rooted_pane_command picker.sh
 assert_rooted_pane_command get.sh
 assert_rooted_pane_command settings.sh
+assert_rooted_pane_command changelog.sh
 
 # Every declared action dispatches through bin/action.sh.
-for action in menu get settings open-workspace open-tab open-split; do
+for action in menu get settings changelog open-workspace open-tab open-split; do
   grep -Fq "id = \"$action\"" "$MANIFEST" || fail "action '$action' is not declared"
 done
 

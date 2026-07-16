@@ -34,7 +34,7 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
 
 **Two layers, joined by environment variables.** Every action starts in bash and may end in Rust:
 
-1. `bin/action.sh` is the single entrypoint for all six manifest actions. It maps the action id
+1. `bin/action.sh` is the single entrypoint for all seven manifest actions. It maps the action id
    (via `HERDR_PLUGIN_ACTION_ID`) to a pane id (`picker` / `get` overlays, `settings` popup) and
    its placement, captures the **origin pane id and cwd** before the pane steals focus, and
    passes them forward as
@@ -62,6 +62,8 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 - `history.rs` — recency state at `$XDG_STATE_HOME/herdr-ghq/recent.tsv`, atomic write, cap 200
 - `settings.rs` — the `--settings` mode: the `SETTINGS` form, its cycle rings, and `write_setting`,
   a flat-config writer that preserves comments and hand-added keys
+- `changelog.rs` — the `--changelog` mode: parses `$HERDR_PLUGIN_ROOT/CHANGELOG.md` and renders it
+  (inline markdown, hanging-indent wrap, `← installed` marker from `CARGO_PKG_VERSION`)
 
 **Sort vs. search:** fuzzy score always wins while a query is present; `SortMode` (recent/name/kind)
 only orders the resting, no-query list. Both paths honour the `GroupFilter`. Ties break on load
