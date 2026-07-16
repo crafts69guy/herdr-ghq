@@ -33,23 +33,27 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let rest = 100u16.saturating_sub(pct);
         match app.preview_position.as_str() {
             "right" => {
-                let c = Layout::horizontal([Constraint::Percentage(rest), Constraint::Percentage(pct)])
-                    .split(body);
+                let c =
+                    Layout::horizontal([Constraint::Percentage(rest), Constraint::Percentage(pct)])
+                        .split(body);
                 (c[0], Some(c[1]))
             }
             "left" => {
-                let c = Layout::horizontal([Constraint::Percentage(pct), Constraint::Percentage(rest)])
-                    .split(body);
+                let c =
+                    Layout::horizontal([Constraint::Percentage(pct), Constraint::Percentage(rest)])
+                        .split(body);
                 (c[1], Some(c[0]))
             }
             "up" => {
-                let c = Layout::vertical([Constraint::Percentage(pct), Constraint::Percentage(rest)])
-                    .split(body);
+                let c =
+                    Layout::vertical([Constraint::Percentage(pct), Constraint::Percentage(rest)])
+                        .split(body);
                 (c[1], Some(c[0]))
             }
             _ => {
-                let c = Layout::vertical([Constraint::Percentage(rest), Constraint::Percentage(pct)])
-                    .split(body);
+                let c =
+                    Layout::vertical([Constraint::Percentage(rest), Constraint::Percentage(pct)])
+                        .split(body);
                 (c[0], Some(c[1]))
             }
         }
@@ -103,7 +107,10 @@ fn draw_input(
     f.render_widget(Paragraph::new(line), inner);
     // Cursor after the prompt + query.
     let cx = inner.x + 2 + app.query.chars().count() as u16;
-    f.set_cursor_position(Position::new(cx.min(inner.x + inner.width.saturating_sub(1)), inner.y));
+    f.set_cursor_position(Position::new(
+        cx.min(inner.x + inner.width.saturating_sub(1)),
+        inner.y,
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,7 +159,10 @@ fn draw_list(
     let mut tab_spans: Vec<Span> = Vec::new();
     for g in app.tabs() {
         let style = if g == app.group {
-            Style::default().fg(ink).bg(title).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(ink)
+                .bg(title)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(border)
         };
@@ -245,7 +255,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(
                 format!(" {key:<8}"),
-                Style::default().bg(color).fg(ink).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(color)
+                    .fg(ink)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             Span::styled(desc.to_string(), Style::default().fg(text)),
@@ -322,11 +335,8 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(title).add_modifier(Modifier::BOLD),
         ))
         .title(
-            Line::from(Span::styled(
-                " any key to close ",
-                Style::default().fg(sub),
-            ))
-            .right_aligned(),
+            Line::from(Span::styled(" any key to close ", Style::default().fg(sub)))
+                .right_aligned(),
         );
     let inner = block.inner(popup);
     f.render_widget(block, popup);

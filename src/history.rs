@@ -19,7 +19,11 @@ fn path() -> Option<PathBuf> {
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .or_else(|| env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/state")))?;
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".local/state"))
+        })?;
     Some(base.join("herdr-ghq").join("recent.tsv"))
 }
 
