@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Picker pane entrypoint: a themed fzf list of ghq-managed repositories where
-# the accept key decides *where* the repo opens. herdr keybindings accept only
-# one key after the prefix (chords are rejected), so the popup's --expect keys
-# stand in for the conceptual "prefix+p <target>" group.
+# Picker pane: a unified herdr switcher. One themed fzf list blends three
+# sources — running agents, open workspaces, and ghq repositories — and the
+# accept key is kind-aware:
 #
-#   enter    open in the configured default target (workspace unless forced)
-#   ctrl-w   new workspace     ctrl-t   new tab
-#   ctrl-s   split current     ctrl-o   cd in the current pane
-#   ctrl-g   open in a new tab and hand off to the git-hub menu
-#   ctrl-u   update (ghq get -u)   ctrl-x   remove (guarded)
-#   alt-enter   clone a new repo (ghq get)
+#   agent      enter → jump to it (herdr agent focus); open keys act on its cwd
+#   workspace  enter → switch to it (herdr workspace focus)
+#   repo       enter → open in the default target; ^w/^t/^s/^o pick where
+#
+#   ^t tab   ^s split   ^o cd current pane   ^w workspace
+#   ^g git menu (repo/agent cwd)   ^u update repo   ^x remove repo
+#   ⌥↵ clone a new repo
+#
+# herdr keybindings accept only one key after the prefix, so these popup keys
+# stand in for the "prefix+p <target>" group. Agents/workspaces need jq; without
+# it the picker gracefully falls back to repos only.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,8 +24,6 @@ PLUGIN_ROOT="${HERDR_PLUGIN_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$PLUGIN_ROOT/.config}"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 
-# Keep the picker usable when an option is malformed so the Settings repair path
-# stays reachable; open_repo still validates targets strictly at use time.
 configure_notifications "$CONFIG_FILE" true
 
 command -v ghq >/dev/null 2>&1 || die "ghq is required — brew install ghq." "ghq not found on PATH"
@@ -31,140 +33,233 @@ default_target="$(toml_get default_target "$CONFIG_FILE" workspace)"
 case "$default_target" in
   workspace | tab | split | pane) ;;
   *)
-    log "invalid default_target '$default_target' in $CONFIG_FILE; using workspace until Settings repairs it"
+    log "invalid default_target '$default_target'; using workspace"
     default_target="workspace"
     ;;
 esac
-# A hot-path action (open-tab, open-split, …) forces Enter's target.
 enter_target="${GHQ_FORCE_TARGET:-$default_target}"
 
 label_mode="$(toml_get label "$CONFIG_FILE" repo)"
 preview_enabled="$(toml_get preview "$CONFIG_FILE" enabled)"
+include_agents="$(toml_get include_agents "$CONFIG_FILE" true)"
+include_workspaces="$(toml_get include_workspaces "$CONFIG_FILE" true)"
 GHQ_SPLIT_DIRECTION="$(toml_get split_direction "$CONFIG_FILE" right)"
 GHQ_SPLIT_RATIO="$(toml_get split_ratio "$CONFIG_FILE" 0.5)"
 export GHQ_SPLIT_DIRECTION GHQ_SPLIT_RATIO
 export GHQ_PREVIEW_README
 GHQ_PREVIEW_README="$(toml_get preview_readme "$CONFIG_FILE" true)"
 
+# jq is required to parse herdr's JSON; hot-path repo actions stay repo-only.
+if ! command -v jq >/dev/null 2>&1; then
+  include_agents="false"
+  include_workspaces="false"
+fi
+if [[ -n "${GHQ_FORCE_TARGET:-}" ]]; then
+  include_agents="false"
+  include_workspaces="false"
+fi
+
 transparency="$(toml_get transparency "$CONFIG_FILE" auto)"
-case "$transparency" in
-  disabled) menu_transparent=false ;;
-  *) menu_transparent=true ;;
-esac
+[[ "$transparency" == "disabled" ]] && menu_transparent=false || menu_transparent=true
 
 ROOT="$(ghq_root)"
 [[ -n "$ROOT" ]] || die "ghq root is not configured." "ghq root returned empty"
 export GHQ_ROOT="$ROOT"
 
-repos="$(ghq list 2>/dev/null)" || die "Ghq could not list repositories." "ghq list failed"
-if [[ -z "$repos" ]]; then
-  notify "No repositories under $ROOT yet. Clone one with ghq get."
-  # Jump straight to the clone flow so an empty root is still actionable.
+# --- palette ---------------------------------------------------------------
+R=$'\033[0m'
+DIM=$'\033[2m'
+sgrf() { # sgrf <hex> <ansi-fallback-code>
+  if [[ -n "$1" ]]; then printf '\033[38;2;%sm' "$(hex_rgb "$1")"; else printf '\033[%sm' "$2"; fi
+}
+A="$(theme_color accent)"
+TXT="$(theme_color text)"
+SUB="$(theme_color subtext0)"
+SURF="$(theme_color surface1)"
+OVL="$(theme_color overlay0)"
+PANEL="$(theme_color panel_bg)"
+C_TXT="$(sgrf "$TXT" 39)"
+C_GH="$(sgrf "$(theme_color mauve)" 35)"
+C_BB="$(sgrf "$(theme_color blue)" 34)"
+C_GL="$(sgrf "$(theme_color peach)" 33)"
+C_GIT="$(sgrf "$SUB" 90)"
+C_WS="$(sgrf "$A" 36)"
+
+state_color() {
+  case "$1" in
+    idle) sgrf "$(theme_color green)" 32 ;;
+    working) sgrf "$(theme_color yellow)" 33 ;;
+    blocked) sgrf "$(theme_color red)" 31 ;;
+    *) sgrf "$SUB" 90 ;;
+  esac
+}
+
+# Fields: kind \t id \t dir \t display. Only the display is shown/searched;
+# fzf returns the full line on accept so kind/id/dir survive the round-trip.
+row() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"; }
+
+collect_entries() {
+  if [[ "$include_agents" == "true" ]]; then
+    herdr agent list 2>/dev/null |
+      jq -r '.result.agents[]? | [.terminal_id, .agent, .agent_status, (.foreground_cwd // .cwd // "")] | @tsv' |
+      while IFS=$'\t' read -r tid agent status cwd; do
+        [[ -n "$tid" ]] || continue
+        local base sc prim disp
+        base="$(basename -- "${cwd:-agent}")"
+        sc="$(state_color "$status")"
+        prim="$(printf '%-38s' "$base · $agent")"
+        disp="$(printf '%s●%s %s%s%s %s%s%s' "$sc" "$R" "$C_TXT" "$prim" "$R" "$DIM" "$status" "$R")"
+        row agent "$tid" "$cwd" "$disp"
+      done
+  fi
+
+  if [[ "$include_workspaces" == "true" ]]; then
+    herdr workspace list 2>/dev/null |
+      jq -r '.result.workspaces[]? | [.workspace_id, .label, (.number|tostring), (.pane_count|tostring), (.focused|tostring)] | @tsv' |
+      while IFS=$'\t' read -r wid label num panes focused; do
+        [[ -n "$wid" ]] || continue
+        local prim sec disp
+        prim="$(printf '%-38s' "$label")"
+        sec="#$num · ${panes}p"
+        [[ "$focused" == "true" ]] && sec="$sec · current"
+        disp="$(printf '%s%s%s %s%s%s %s%s%s' "$C_WS" "" "$R" "$C_TXT" "$prim" "$R" "$DIM" "$sec" "$R")"
+        row workspace "$wid" "" "$disp"
+      done
+  fi
+
+  local rel host rest icon ic prim disp
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    host="${rel%%/*}"
+    rest="${rel#*/}"
+    case "$host" in
+      github.com) icon=""; ic="$C_GH" ;;
+      bitbucket.org) icon=""; ic="$C_BB" ;;
+      gitlab.com) icon=""; ic="$C_GL" ;;
+      *) icon=""; ic="$C_GIT" ;;
+    esac
+    prim="$(printf '%-38s' "$rest")"
+    disp="$(printf '%s%s%s %s%s%s %s%s%s' "$ic" "$icon" "$R" "$C_TXT" "$prim" "$R" "$DIM" "${host%%.*}" "$R")"
+    row repo "$rel" "$ROOT/$rel" "$disp"
+  done < <(ghq list 2>/dev/null)
+}
+
+entries="$(collect_entries)"
+if [[ -z "$entries" ]]; then
+  notify "Nothing to switch to yet. Clone a repo with ghq get."
   exec bash "$SCRIPT_DIR/get.sh"
 fi
 
-# The user's interactive fzf defaults (e.g. --height=40%, custom colors) would
-# shrink and restyle the popup; this pane owns its full appearance.
+# The user's interactive fzf defaults would shrink/restyle the popup; own it.
 export FZF_DEFAULT_OPTS=""
-
-accent="$(theme_color accent)"
-text="$(theme_color text)"
-subtext="$(theme_color subtext0)"
-surface="$(theme_color surface1)"
-overlay="$(theme_color overlay0)"
-panel="$(theme_color panel_bg)"
 
 background=-1
 if [[ "$menu_transparent" == "false" ]]; then
-  background="${panel:-#15191B}"
-  surface="${surface:-#23282A}"
+  background="${PANEL:-#15191B}"
+  SURF="${SURF:-#23282A}"
 fi
+
+header=$'\033[2m↵ open/focus   ^t tab   ^s split   ^o cd   ^w workspace\n^g git   ^u update   ^x remove   ⌥↵ clone\033[0m'
 
 fzf_args=(
   --ansi --reverse --no-multi --cycle
+  --delimiter='\t' --with-nth=4 --nth=4
+  --info=inline
   "--expect=ctrl-w,ctrl-t,ctrl-s,ctrl-o,ctrl-g,ctrl-u,ctrl-x,alt-enter"
   --prompt='  ' --pointer='▌'
-  "--margin=1,2" "--padding=1,2"
-  --border=rounded --border-label=" 󰊢 Projects · ${enter_target} " --border-label-pos=3
-  --header='enter open · ^w ws · ^t tab · ^s split · ^o cd · ^g git · ^u update · ^x remove · ⌥↵ clone'
-  --header-first
+  "--margin=1,2" "--padding=1,1"
+  --border=rounded --border-label=' 󰊢 Switcher ' --border-label-pos=3
+  --header "$header" --header-first
 )
 
 if [[ "$preview_enabled" != "disabled" ]]; then
   fzf_args+=(
-    --preview "bash '$SCRIPT_DIR/preview.sh' {}"
-    --preview-window 'right:55%:border-rounded:wrap'
-    --preview-label ' 󰙅 Repo '
+    --preview "bash '$SCRIPT_DIR/preview.sh' {1} {2} {3}"
+    --preview-window 'right:52%:border-rounded:wrap'
+    --preview-label ' 󰈈 Preview '
   )
 fi
 
-if [[ -n "$accent" ]]; then
-  fzf_args+=(--color "fg:${text:--1},bg:${background},gutter:${background},hl:${accent},fg+:${text:--1},bg+:${surface:--1},hl+:${accent},prompt:${accent},pointer:${accent},border:${overlay:--1},label:${accent}:bold,header:${subtext:--1},preview-border:${overlay:--1}")
+if [[ -n "$A" ]]; then
+  fzf_args+=(--color "fg:${TXT:--1},bg:${background},gutter:${background},hl:${A},fg+:${TXT:--1},bg+:${SURF:--1},hl+:${A},prompt:${A},pointer:${A},info:${SUB:--1},border:${OVL:--1},label:${A}:bold,header:${SUB:--1},preview-border:${OVL:--1},preview-label:${SUB:--1}")
 elif [[ "$menu_transparent" == "false" ]]; then
-  fzf_args+=(--color "bg:${background},gutter:${background},bg+:${surface}")
+  fzf_args+=(--color "bg:${background},gutter:${background},bg+:${SURF}")
 fi
 
-out="$(printf '%s\n' "$repos" | fzf "${fzf_args[@]}")" || exit 0
+out="$(printf '%s\n' "$entries" | fzf "${fzf_args[@]}")" || exit 0
 
 key="$(printf '%s\n' "$out" | sed -n '1p')"
-rel="$(printf '%s\n' "$out" | sed -n '2p')"
+sel="$(printf '%s\n' "$out" | sed -n '2p')"
 
-# alt-enter clones a new repo regardless of the current selection.
 if [[ "$key" == "alt-enter" ]]; then
   exec bash "$SCRIPT_DIR/get.sh"
 fi
+[[ -n "$sel" ]] || exit 0
 
-[[ -n "$rel" ]] || exit 0
-abs="$ROOT/$rel"
-label="$(repo_label "$rel" "$label_mode")"
+IFS=$'\t' read -r kind id dir _ <<<"$sel"
 origin_pane="${GHQ_ORIGIN_PANE_ID:-}"
 
-case "$key" in
-  '') open_repo "$enter_target" "$abs" "$origin_pane" "$label" ;;
-  ctrl-w) open_repo workspace "$abs" "$origin_pane" "$label" ;;
-  ctrl-t) open_repo tab "$abs" "$origin_pane" "$label" ;;
-  ctrl-s) open_repo split "$abs" "$origin_pane" "$label" ;;
-  ctrl-o) open_repo pane "$abs" "$origin_pane" "$label" ;;
-  ctrl-g)
-    # Land the repo in a focused tab, then hand off to the git-hub menu, which
-    # reads the now-active pane. Falls back to just opening the tab when git-hub
-    # is not installed.
-    open_repo tab "$abs" "$origin_pane" "$label"
-    if "$(herdr_bin)" plugin list 2>/dev/null | grep -q '^- git-hub '; then
-      "$(herdr_bin)" plugin action invoke menu --plugin git-hub >/dev/null 2>&1 ||
-        log "git-hub menu handoff failed for $abs"
+# --- accept ----------------------------------------------------------------
+case "$kind" in
+  agent)
+    label="$(basename -- "${dir:-$id}")"
+    # Open keys act on the agent's cwd; without one, fall back to jumping to it.
+    open_kind=""
+    case "$key" in
+      ctrl-w) open_kind="workspace" ;;
+      ctrl-t) open_kind="tab" ;;
+      ctrl-s) open_kind="split" ;;
+      ctrl-o) open_kind="pane" ;;
+    esac
+    if [[ -n "$open_kind" && -n "$dir" ]]; then
+      open_repo "$open_kind" "$dir" "$origin_pane" "$label"
     else
-      notify "git-hub is not installed — opened $label in a new tab."
+      focus_agent "$id"
     fi
     ;;
-  ctrl-u)
-    printf '\033[1mUpdating\033[0m %s\n\n' "$rel"
-    if ghq get -u -- "$rel"; then
-      notify "Updated $label."
-    else
-      notify "Update failed for $label — check the pane."
-    fi
-    printf '\n\033[2mpress any key to close\033[0m'
-    read -rsn1 _ || true
+  workspace)
+    focus_workspace "$id"
     ;;
-  ctrl-x)
-    printf '\033[1;31mRemove repository\033[0m\n  %s\n\n' "$abs"
-    printf 'This deletes the directory permanently.\n'
-    printf "Type the repo name (\033[1m%s\033[0m) to confirm: " "$label"
-    read -r reply || true
-    if [[ "$reply" == "$label" ]]; then
-      if rm -rf -- "$abs"; then
-        notify "Removed $label."
-      else
-        die "Ghq could not remove $label." "rm -rf failed for $abs"
-      fi
-    else
-      printf '\nAborted.\n'
-      notify "Removal of $label aborted."
-      sleep 0.6
-    fi
+  repo)
+    abs="$dir"
+    label="$(repo_label "$id" "$label_mode")"
+    case "$key" in
+      '') open_repo "$enter_target" "$abs" "$origin_pane" "$label" ;;
+      ctrl-w) open_repo workspace "$abs" "$origin_pane" "$label" ;;
+      ctrl-t) open_repo tab "$abs" "$origin_pane" "$label" ;;
+      ctrl-s) open_repo split "$abs" "$origin_pane" "$label" ;;
+      ctrl-o) open_repo pane "$abs" "$origin_pane" "$label" ;;
+      ctrl-g)
+        open_repo tab "$abs" "$origin_pane" "$label"
+        if "$(herdr_bin)" plugin list 2>/dev/null | grep -q '^- git-hub '; then
+          "$(herdr_bin)" plugin action invoke menu --plugin git-hub >/dev/null 2>&1 ||
+            log "git-hub menu handoff failed for $abs"
+        else
+          notify "git-hub is not installed — opened $label in a new tab."
+        fi
+        ;;
+      ctrl-u)
+        printf '\033[1mUpdating\033[0m %s\n\n' "$id"
+        if ghq get -u -- "$id"; then notify "Updated $label."; else notify "Update failed for $label — check the pane."; fi
+        printf '\n\033[2mpress any key to close\033[0m'
+        read -rsn1 _ || true
+        ;;
+      ctrl-x)
+        printf '\033[1;31mRemove repository\033[0m\n  %s\n\n' "$abs"
+        printf 'This deletes the directory permanently.\n'
+        printf "Type the repo name (\033[1m%s\033[0m) to confirm: " "$label"
+        read -r reply || true
+        if [[ "$reply" == "$label" ]]; then
+          if rm -rf -- "$abs"; then notify "Removed $label."; else die "Ghq could not remove $label." "rm -rf failed for $abs"; fi
+        else
+          printf '\nAborted.\n'; notify "Removal of $label aborted."; sleep 0.6
+        fi
+        ;;
+    esac
     ;;
   *)
-    die "Ghq received an unexpected key '$key'." "unexpected fzf key '$key'"
+    # ctrl-g on a repo path via handoff already handled; unknown key for
+    # agent/workspace is a no-op (focus already applied above).
+    log "no action for kind='$kind' key='$key'"
     ;;
 esac

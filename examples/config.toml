@@ -14,6 +14,10 @@ split_ratio = "0.5"         # 0.1–0.9
 # Workspace / tab label style: repo (basename) | owner-repo | path.
 label = "repo"
 
+# Unified switcher sources (need jq). The picker blends these with repos.
+include_agents = "true"       # running herdr agents (enter = jump to them)
+include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
+
 # Repo preview pane.
 preview = "enabled"         # enabled | disabled
 preview_readme = "true"     # include a README excerpt

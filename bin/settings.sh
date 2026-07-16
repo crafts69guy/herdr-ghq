@@ -21,7 +21,9 @@ SETTINGS=(
   "split_direction|right|split growth direction"
   "split_ratio|0.5|split size (0.1–0.9)"
   "label|repo|workspace/tab label style"
-  "preview|enabled|show the repo preview pane"
+  "include_agents|true|list running agents in the switcher"
+  "include_workspaces|true|list open workspaces in the switcher"
+  "preview|enabled|show the preview pane"
   "preview_readme|true|include README in the preview"
   "clone_source|clipboard|seed clone input from clipboard"
   "open_after_clone|true|open a repo right after cloning"
@@ -55,7 +57,7 @@ cycle() {
     label)
       case "$cur" in repo) echo owner-repo ;; owner-repo) echo path ;; *) echo repo ;; esac ;;
     preview) [[ "$cur" == enabled ]] && echo disabled || echo enabled ;;
-    preview_readme | open_after_clone | notifications) [[ "$cur" == true ]] && echo false || echo true ;;
+    preview_readme | open_after_clone | notifications | include_agents | include_workspaces) [[ "$cur" == true ]] && echo false || echo true ;;
     clone_source) [[ "$cur" == clipboard ]] && echo prompt || echo clipboard ;;
     transparency)
       case "$cur" in auto) echo enabled ;; enabled) echo disabled ;; *) echo auto ;; esac ;;

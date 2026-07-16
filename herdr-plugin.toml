@@ -1,8 +1,8 @@
 id = "ghq"
 name = "Ghq"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.4"
-description = "One-key ghq repository switcher: fuzzy-pick a repo and open it in a new workspace, tab, split, or the current pane — plus clone (ghq get), update, remove, and a handoff to the git-hub menu."
+description = "A unified herdr switcher: fuzzy-jump across running agents, open workspaces, and ghq repositories in one themed picker — open repos in a new workspace/tab/split/pane, plus clone, update, remove, and a git-hub handoff."
 platforms = ["macos", "linux"]
 
 [[actions]]

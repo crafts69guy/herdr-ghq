@@ -298,6 +298,19 @@ repo_label() {
   esac
 }
 
+# Switch to an existing herdr workspace / agent (the unified switcher's
+# non-repo entries). Targets come straight from `herdr workspace list` /
+# `herdr agent list`, so they are trusted ids, not guessed ones.
+focus_workspace() {
+  "$(herdr_bin)" workspace focus "$1" >/dev/null ||
+    die "Ghq could not switch to that workspace." "herdr workspace focus failed for '$1'"
+}
+
+focus_agent() {
+  "$(herdr_bin)" agent focus "$1" >/dev/null ||
+    die "Ghq could not jump to that agent." "herdr agent focus failed for '$1'"
+}
+
 # Open an absolute repo path at the requested herdr target. Split and pane
 # targets act on the captured origin pane id — never a guessed one.
 #   open_repo <workspace|tab|split|pane> <abs_path> <origin_pane_id> <label>
