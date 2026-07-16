@@ -153,30 +153,34 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect, sub: Color, border: Color)
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
-    let text = t.or("text", Color::Reset);
-    let sub = t.or("subtext0", Color::DarkGray);
+    // Dark ink for text sitting on the coloured pills.
+    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
     let keys: [(&str, &str, Color); 9] = [
         ("↵", "open", t.or("accent", Color::Cyan)),
         ("^t", "tab", t.or("green", Color::Green)),
         ("^s", "split", t.or("yellow", Color::Yellow)),
         ("^o", "cd", t.or("blue", Color::Blue)),
-        ("^w", "ws", t.or("mauve", Color::Magenta)),
+        ("^w", "workspace", t.or("mauve", Color::Magenta)),
         ("^g", "git", t.or("peach", Color::Yellow)),
-        ("^u", "upd", t.or("accent", Color::Cyan)),
-        ("^x", "rm", t.or("red", Color::Red)),
-        ("⌥↵", "clone", t.or("mauve", Color::Magenta)),
+        ("^u", "update", t.or("teal", Color::Cyan)),
+        ("^x", "remove", t.or("red", Color::Red)),
+        ("⌥↵", "clone", t.or("blue", Color::Magenta)),
     ];
     let mut spans = vec![Span::raw(" ")];
-    for (idx, (key, label, color)) in keys.iter().enumerate() {
-        if idx > 0 {
-            spans.push(Span::styled("  ·  ", Style::default().fg(sub)));
-        }
+    for (key, label, color) in keys.iter() {
+        // Each command is a coloured pill: bold key + full label, dark ink.
         spans.push(Span::styled(
-            *key,
-            Style::default().fg(*color).add_modifier(Modifier::BOLD),
+            format!(" {key} "),
+            Style::default()
+                .bg(*color)
+                .fg(ink)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!("{label} "),
+            Style::default().bg(*color).fg(ink),
         ));
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(*label, Style::default().fg(text)));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

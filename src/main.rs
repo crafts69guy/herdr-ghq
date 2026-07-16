@@ -48,7 +48,7 @@ impl App {
         let preview_enabled = cfg.get("preview", "enabled") != "disabled";
         let preview_position = cfg.get("preview_position", "right");
         let preview_pct = cfg
-            .get("preview_size", "52%")
+            .get("preview_size", "60%")
             .trim_end_matches('%')
             .parse::<u16>()
             .unwrap_or(52)

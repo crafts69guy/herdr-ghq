@@ -22,7 +22,7 @@ include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
 # taste: right (side-by-side, default), down, up, or left.
 preview = "enabled"              # enabled | disabled
 preview_position = "right"       # right | down | up | left
-preview_size = "52%"             # preview share of the body, e.g. 52%
+preview_size = "60%"             # preview share of the body (switcher : preview = 4 : 6)
 preview_readme = "true"          # include a README excerpt
 
 # Clone flow (ghq get).
