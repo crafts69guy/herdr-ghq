@@ -44,6 +44,8 @@ want it** — a new workspace, tab, split, or the current pane.
   | `tab` / `shift-tab` | cycle the **group** filter — All → Agents → Workspaces → Repos (empty groups are skipped); the active tab is shown in the Switcher title |
   | `alt-s`             | cycle the **sort**: `recent` (latest opened) → `name` → `kind`                                                                           |
   | `alt-p`             | **toggle** the preview pane on/off                                                                                                       |
+  | `alt-c`             | read the **changelog** over the list; `esc` returns you to the same entry                                                                |
+  | `alt-u`             | **update the plugin** itself (vs `ctrl-u`, which updates the highlighted repo)                                                           |
   | `?`                 | toggle a **keybindings cheatsheet** popup (any key closes it)                                                                            |
 
   The **default sort is `recent`** — repos you opened most recently float to the top.

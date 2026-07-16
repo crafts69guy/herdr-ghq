@@ -64,7 +64,8 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 - `settings.rs` — the `--settings` mode: the `SETTINGS` form, its cycle rings, and `write_setting`,
   a flat-config writer that preserves comments and hand-added keys
 - `changelog.rs` — the `--changelog` mode: parses `$HERDR_PLUGIN_ROOT/CHANGELOG.md` and renders it
-  (inline markdown, hanging-indent wrap, `← installed` marker from `CARGO_PKG_VERSION`)
+  (inline markdown, hanging-indent wrap, `← installed` marker from `CARGO_PKG_VERSION`). `parse` +
+  `render` are shared with the picker's `⌥c` popup, so both surfaces stay identical
 - `update.rs` — the `--update-check` mode plus the cache the picker reads
   (`$XDG_STATE_HOME/herdr-ghq/update.tsv`, `checked_at<TAB>latest`, 24h TTL)
 

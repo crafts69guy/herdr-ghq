@@ -55,6 +55,13 @@ pub struct App {
     pub show_help: bool,
     /// A newer version the cache knows about; shown, never acted on.
     pub update: Option<String>,
+    pub show_changelog: bool,
+    /// Parsed on first open, not at startup: most sessions never press ⌥c.
+    pub changelog: Vec<changelog::Block>,
+    pub changelog_scroll: u16,
+    /// Rendered rows and visible rows at the last draw, so scrolling can stop.
+    pub changelog_len: u16,
+    pub changelog_rows: u16,
     pub group: GroupFilter,
     pub sort: SortMode,
     /// id → last-opened epoch, for the Recent sort.
@@ -121,6 +128,11 @@ impl App {
             preview_scroll: 0,
             show_help: false,
             update,
+            show_changelog: false,
+            changelog: Vec::new(),
+            changelog_scroll: 0,
+            changelog_len: 0,
+            changelog_rows: 1,
             group: GroupFilter::All,
             sort,
             recent,
@@ -175,6 +187,19 @@ impl App {
         let next = (cur + dir).rem_euclid(tabs.len() as i32);
         self.group = tabs[next as usize];
         self.recompute();
+    }
+
+    /// Parse the changelog the first time it is asked for. A failure leaves the popup
+    /// open with a single line saying so, rather than a blank box.
+    fn open_changelog(&mut self) {
+        if self.changelog.is_empty() {
+            self.changelog = match changelog::changelog_text() {
+                Ok(text) => changelog::parse(&text),
+                Err(e) => changelog::parse(&format!("## [unavailable]\n\n- {e}\n")),
+            };
+        }
+        self.changelog_scroll = 0;
+        self.show_changelog = true;
     }
 
     fn toggle_preview(&mut self) {
@@ -294,6 +319,31 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(KeyModifiers::ALT);
 
+    // The changelog popup scrolls, so it cannot dismiss on any key the way the help
+    // cheatsheet does; esc/q closes it and the movement keys drive it.
+    if app.show_changelog {
+        let page = app.changelog_rows.saturating_sub(2).max(1);
+        let max = app.changelog_len.saturating_sub(app.changelog_rows);
+        match k.code {
+            KeyCode::Char('c') if ctrl => return Flow::Quit,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => app.show_changelog = false,
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.changelog_scroll = (app.changelog_scroll + 1).min(max)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.changelog_scroll = app.changelog_scroll.saturating_sub(1)
+            }
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                app.changelog_scroll = (app.changelog_scroll + page).min(max)
+            }
+            KeyCode::PageUp => app.changelog_scroll = app.changelog_scroll.saturating_sub(page),
+            KeyCode::Home | KeyCode::Char('g') => app.changelog_scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => app.changelog_scroll = max,
+            _ => {}
+        }
+        return Flow::Continue;
+    }
+
     // While the help popup is open, swallow every key: the first press just
     // dismisses it (^c still quits, so you're never trapped).
     if app.show_help {
@@ -330,6 +380,13 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
             app.recompute();
             Flow::Continue
         }
+        // ⌥c reads the changelog without leaving the list; ⌥u updates the plugin
+        // itself, next to ^u which updates the highlighted repo.
+        KeyCode::Char('c') if alt => {
+            app.open_changelog();
+            Flow::Continue
+        }
+        KeyCode::Char('u') if alt => Flow::Accept(Accept::UpdatePlugin),
         KeyCode::Enter if alt => Flow::Accept(Accept::Clone),
         KeyCode::Enter => Flow::Accept(Accept::Default),
         KeyCode::Up => {
@@ -501,7 +558,8 @@ fn main() -> Result<()> {
                 | Accept::Pane
                 | Accept::Git => history::touch(&id),
                 Accept::Remove => history::forget(&id),
-                Accept::Update | Accept::Clone => {}
+                // Clone and UpdatePlugin exec away; neither touches an entry's recency.
+                Accept::Update | Accept::Clone | Accept::UpdatePlugin => {}
             }
         }
     }

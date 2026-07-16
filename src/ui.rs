@@ -69,9 +69,69 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     draw_footer(f, app, root[2]);
 
+    if app.show_changelog {
+        draw_changelog(f, app, f.area());
+    }
     if app.show_help {
         draw_help(f, app, f.area());
     }
+}
+
+/// The changelog, over the list rather than instead of it: reading what changed should
+/// not cost you your place. Same parser and renderer as the standalone `--changelog`
+/// pane, so the two cannot drift.
+fn draw_changelog(f: &mut Frame, app: &mut App, area: Rect) {
+    let t = &app.theme;
+    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
+    let sub = t.or("subtext0", Color::Gray);
+    let border = t.or("accent", Color::Cyan);
+    let title = app.title_color;
+
+    let w = area.width.saturating_sub(8).clamp(48, 84);
+    let h = area.height.saturating_sub(4).clamp(8, 32);
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(w)) / 2,
+        area.y + (area.height.saturating_sub(h)) / 2,
+        w,
+        h,
+    );
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(ink))
+        .title(Span::styled(
+            "  Changelog ",
+            Style::default().fg(title).add_modifier(Modifier::BOLD),
+        ))
+        .title(
+            Line::from(Span::styled(
+                " ↑↓ scroll · esc close ",
+                Style::default().fg(sub),
+            ))
+            .right_aligned(),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = crate::changelog::render(
+        &app.changelog,
+        inner.width.saturating_sub(2) as usize,
+        &app.theme,
+        title,
+    );
+    app.changelog_len = lines.len() as u16;
+    app.changelog_rows = inner.height;
+    app.changelog_scroll = app
+        .changelog_scroll
+        .min(app.changelog_len.saturating_sub(app.changelog_rows));
+
+    f.render_widget(
+        Paragraph::new(lines).scroll((app.changelog_scroll, 0)),
+        inner,
+    );
 }
 
 fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
@@ -390,6 +450,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         head(" View"),
         row("⌥s", blue, "Cycle sort order"),
         row("⌥p", mauve, "Toggle preview"),
+        blank(),
+        head(" This plugin"),
+        row("⌥c", title, "What's new"),
+        row("⌥u", peach, "Update Ghq itself"),
     ];
 
     // Centre a comfortably sized popup within the screen.

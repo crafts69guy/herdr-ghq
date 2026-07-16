@@ -45,6 +45,7 @@ pub enum Accept {
     Update,
     Remove,
     Clone,
+    UpdatePlugin,
 }
 
 pub fn dispatch(
@@ -61,6 +62,15 @@ pub fn dispatch(
             .arg(format!("{script_dir}/get.sh"))
             .exec();
         return Err(anyhow!("failed to exec get.sh: {err}"));
+    }
+
+    // Must replace this process, not spawn beside it: `herdr plugin install` rewrites
+    // the checkout holding the very binary running here. Needs no selection either.
+    if accept == Accept::UpdatePlugin {
+        let err = Command::new("bash")
+            .arg(format!("{script_dir}/update-plugin.sh"))
+            .exec();
+        return Err(anyhow!("failed to exec update-plugin.sh: {err}"));
     }
 
     let e = entry.ok_or_else(|| anyhow!("no selection"))?;
@@ -88,7 +98,7 @@ pub fn dispatch(
                 }
                 Accept::Update => update(&e.id, &e.label),
                 Accept::Remove => remove(&dir, &e.label),
-                Accept::Clone => unreachable!(),
+                Accept::Clone | Accept::UpdatePlugin => unreachable!(),
             }
         }
     }

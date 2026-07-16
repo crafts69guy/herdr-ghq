@@ -7,6 +7,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Both plugin actions are now reachable from the switcher itself: `⌥c` reads the
+  changelog and `⌥u` updates the plugin, alongside `^u` which updates the highlighted
+  *repo*. Both are listed under `?`.
+
+  `⌥c` draws over the list rather than replacing it, so reading what changed does not
+  cost you your place — `esc` puts you back on the same entry. It shares the parser and
+  renderer with the `ghq.changelog` pane, so the two cannot drift apart.
+
 ## [0.6.0] - 2026-07-16
 
 ### Added

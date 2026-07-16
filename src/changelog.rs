@@ -7,6 +7,9 @@
 //!
 //! Like the settings dashboard, this draws no border of its own: herdr frames and
 //! titles the popup pane already.
+//!
+//! `parse` and `render` are also what the picker's own `⌥c` popup draws, so the two
+//! surfaces cannot drift apart.
 
 use std::fs;
 use std::time::Duration;
@@ -28,7 +31,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// One parsed piece of the changelog. Bullets arrive re-joined, so they can be
 /// re-wrapped to the popup's width instead of keeping the file's 88-column breaks.
-enum Block {
+pub enum Block {
     Version { version: String, date: String },
     Section(String),
     Bullet(String),
@@ -38,7 +41,7 @@ enum Block {
 /// Parse Keep a Changelog markdown. Everything before the first `## [` is the preamble,
 /// and the `[x.y.z]: https://…` compare links at the bottom are markdown plumbing — both
 /// are noise in a viewer.
-fn parse(text: &str) -> Vec<Block> {
+pub fn parse(text: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut bullet: Option<String> = None;
     let mut started = false;
@@ -219,7 +222,7 @@ fn spans(text: &str, base: Style, code: Style) -> Vec<Span<'static>> {
     out
 }
 
-fn render(blocks: &[Block], width: usize, theme: &Theme, title: Color) -> Vec<Line<'static>> {
+pub fn render(blocks: &[Block], width: usize, theme: &Theme, title: Color) -> Vec<Line<'static>> {
     let text = theme.or("text", Color::Reset);
     let sub = theme.or("subtext0", Color::Gray);
     let accent = theme.or("accent", Color::Cyan);
@@ -362,7 +365,7 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// `$HERDR_PLUGIN_ROOT/CHANGELOG.md` — the installed plugin is a checkout of this repo.
-fn changelog_text() -> Result<String> {
+pub fn changelog_text() -> Result<String> {
     let root = std::env::var("HERDR_PLUGIN_ROOT").unwrap_or_else(|_| ".".into());
     let path = std::path::Path::new(&root).join("CHANGELOG.md");
     fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))
