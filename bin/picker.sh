@@ -170,15 +170,15 @@ fi
 # Full-width colorful command bar (fzf footer). Each key gets its own hue and a
 # dim separator between groups.
 fk() { printf '%s%s%s %s%s%s' "$1" "$2" "$R" "$C_TXT" "$3" "$R"; }
-SEP="  ${C_GIT}│${R}  "
-footer=" $(fk "$C_A" '↵' 'open')${SEP}$(fk "$C_G" '^t' 'tab')${SEP}$(fk "$C_Y" '^s' 'split')${SEP}$(fk "$C_B" '^o' 'cd')${SEP}$(fk "$C_M" '^w' 'workspace')${SEP}$(fk "$C_P" '^g' 'git')${SEP}$(fk "$C_A" '^u' 'update')${SEP}$(fk "$C_RD" '^x' 'remove')${SEP}$(fk "$C_M" '⌥↵' 'clone') "
+SEP=" ${C_GIT}·${R} "
+footer=" $(fk "$C_A" '↵' 'open')${SEP}$(fk "$C_G" '^t' 'tab')${SEP}$(fk "$C_Y" '^s' 'split')${SEP}$(fk "$C_B" '^o' 'cd')${SEP}$(fk "$C_M" '^w' 'ws')${SEP}$(fk "$C_P" '^g' 'git')${SEP}$(fk "$C_A" '^u' 'upd')${SEP}$(fk "$C_RD" '^x' 'rm')${SEP}$(fk "$C_M" '⌥↵' 'clone') "
 
 # Layout mirrors codediff.nvim: a Search input box on top, a Results list box
 # below, and a Preview box on the right — no outer wrapper border.
 fzf_args=(
   --ansi --layout=reverse --no-multi --cycle
   --delimiter='\t' --with-nth=4 --nth=4
-  --info=inline
+  --info=inline-right
   "--expect=ctrl-w,ctrl-t,ctrl-s,ctrl-o,ctrl-g,ctrl-u,ctrl-x,alt-enter"
   --prompt='  ' --pointer='▌'
   "--margin=1,1" "--padding=0"
