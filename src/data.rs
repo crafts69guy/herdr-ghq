@@ -256,7 +256,11 @@ pub fn load(cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
                         if tid.is_empty() {
                             continue;
                         }
-                        let agent = a["agent"].as_str().unwrap_or("agent");
+                        // herdr can report a pane with a terminal id but no agent label
+                        // (a stale or half-detected entry). Those are not agents.
+                        let Some(agent) = a["agent"].as_str().filter(|s| !s.is_empty()) else {
+                            continue;
+                        };
                         let status = a["agent_status"].as_str().unwrap_or("unknown");
                         let cwd = a["foreground_cwd"]
                             .as_str()
