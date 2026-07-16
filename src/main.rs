@@ -26,6 +26,7 @@ pub struct App {
     pub query: String,
     matcher: Matcher,
     pub theme: Theme,
+    pub title_color: ratatui::style::Color,
     pub cfg: Config,
     pub root: String,
     pub script_dir: String,
@@ -53,6 +54,9 @@ impl App {
             .parse::<u16>()
             .unwrap_or(52)
             .clamp(20, 80);
+        let title_color = theme
+            .resolve(&cfg.get("title_color", "peach"))
+            .unwrap_or_else(|| theme.or("accent", ratatui::style::Color::Cyan));
         let filtered = (0..entries.len()).collect();
         App {
             entries,
@@ -61,6 +65,7 @@ impl App {
             query: String::new(),
             matcher: Matcher::new(NucleoConfig::DEFAULT),
             theme,
+            title_color,
             cfg,
             root,
             script_dir,

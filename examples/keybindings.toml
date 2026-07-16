@@ -5,7 +5,7 @@
 # Add this to ~/.config/herdr/config.toml, then `herdr server reload-config`.
 
 [[keys.command]]
-key = "prefix+p"
+key = "prefix+space"
 type = "plugin_action"
 command = "ghq.menu"
 description = "Project switcher (ghq)"

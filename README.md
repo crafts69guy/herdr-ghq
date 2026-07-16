@@ -72,7 +72,7 @@ and reload:
 
 ```toml
 [[keys.command]]
-key = "prefix+p"
+key = "prefix+space"
 type = "plugin_action"
 command = "ghq.menu"
 description = "Project switcher (ghq)"
@@ -82,7 +82,7 @@ description = "Project switcher (ghq)"
 herdr server reload-config
 ```
 
-Press `prefix+p` to open the picker. `ghq.get` opens the clone flow directly, and
+Press `prefix+space` to open the picker. `ghq.get` opens the clone flow directly, and
 `ghq.settings` opens the settings dashboard.
 
 ## Configuration

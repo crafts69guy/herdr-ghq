@@ -57,10 +57,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         (body, None)
     };
 
-    draw_input(f, app, root[0], accent, sub, overlay);
-    draw_list(f, app, list_area, accent, text, sub, overlay, surface);
+    let title = app.title_color;
+    draw_input(f, app, root[0], title, accent, sub, overlay);
+    draw_list(f, app, list_area, title, accent, text, sub, overlay, surface);
     if let Some(area) = preview_area {
-        draw_preview(f, app, area, sub, overlay);
+        draw_preview(f, app, area, title, overlay);
     }
     draw_footer(f, app, root[2]);
 }
@@ -76,9 +77,17 @@ fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
         ))
 }
 
-fn draw_input(f: &mut Frame, app: &App, area: Rect, accent: Color, sub: Color, border: Color) {
+fn draw_input(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    title: Color,
+    accent: Color,
+    sub: Color,
+    border: Color,
+) {
     let count = format!(" {}/{} ", app.filtered.len(), app.entries.len());
-    let block = boxed("Search", accent, border)
+    let block = boxed("Search", title, border)
         .title(Line::from(Span::styled(count, Style::default().fg(sub))).right_aligned());
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -98,6 +107,7 @@ fn draw_list(
     f: &mut Frame,
     app: &mut App,
     area: Rect,
+    title: Color,
     accent: Color,
     text: Color,
     sub: Color,
@@ -126,7 +136,7 @@ fn draw_list(
         .collect();
 
     let list = List::new(items)
-        .block(boxed("Switcher", accent, border))
+        .block(boxed("Switcher", title, border))
         .highlight_symbol("▌ ")
         .highlight_style(
             Style::default()
@@ -142,8 +152,8 @@ fn draw_list(
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_preview(f: &mut Frame, app: &App, area: Rect, sub: Color, border: Color) {
-    let block = boxed("󰈈 Preview", sub, border);
+fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Color) {
+    let block = boxed("󰈈 Preview", title, border);
     let para = Paragraph::new(app.preview.clone())
         .block(block)
         .wrap(Wrap { trim: false })

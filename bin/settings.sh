@@ -23,6 +23,7 @@ SETTINGS=(
   "label|repo|workspace/tab label style"
   "include_agents|true|list running agents in the switcher"
   "include_workspaces|true|list open workspaces in the switcher"
+  "title_color|peach|box title colour (theme slot or #hex)"
   "preview|enabled|show the preview pane"
   "preview_position|down|down = full-width footer; right = side-by-side"
   "preview_readme|true|include README in the preview"
@@ -59,6 +60,8 @@ cycle() {
       case "$cur" in repo) echo owner-repo ;; owner-repo) echo path ;; *) echo repo ;; esac ;;
     preview) [[ "$cur" == enabled ]] && echo disabled || echo enabled ;;
     preview_position) [[ "$cur" == down ]] && echo right || echo down ;;
+    title_color)
+      case "$cur" in peach) echo mauve ;; mauve) echo teal ;; teal) echo blue ;; blue) echo accent ;; *) echo peach ;; esac ;;
     preview_readme | open_after_clone | notifications | include_agents | include_workspaces) [[ "$cur" == true ]] && echo false || echo true ;;
     clone_source) [[ "$cur" == clipboard ]] && echo prompt || echo clipboard ;;
     transparency)

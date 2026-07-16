@@ -54,6 +54,16 @@ impl Theme {
     pub fn or(&self, key: &str, fallback: Color) -> Color {
         self.get(key).unwrap_or(fallback)
     }
+
+    /// Resolve a colour spec that is either a `[theme.custom]` slot name
+    /// (e.g. `peach`) or a literal `#rrggbb`.
+    pub fn resolve(&self, spec: &str) -> Option<Color> {
+        if spec.starts_with('#') {
+            parse_hex(spec)
+        } else {
+            self.get(spec)
+        }
+    }
 }
 
 fn parse_hex(raw: &str) -> Option<Color> {
