@@ -4,10 +4,11 @@
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
-use crate::App;
+use crate::action::Accept;
+use crate::{App, Cmd};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let accent = app.theme.or("accent", Color::Cyan);
@@ -221,6 +222,11 @@ fn draw_list(
     // tab highlighted, plus a right-aligned sort indicator.
     let ink = app.theme.or("panel_bg", Color::Rgb(16, 18, 20));
     let mut tab_spans: Vec<Span> = Vec::new();
+    // A tab's click zone is measured in the loop that lays it out: the two
+    // cannot drift, because there is only one place that decides where a tab is.
+    // Titles start one column in, past the block's corner.
+    let mut x = area.x + 1;
+    let mut zones = Vec::new();
     for g in app.tabs() {
         let style = if g == app.group {
             Style::default()
@@ -230,9 +236,14 @@ fn draw_list(
         } else {
             Style::default().fg(border)
         };
-        tab_spans.push(Span::styled(format!(" {} ", g.label()), style));
+        let label = format!(" {} ", g.label());
+        let w = label.chars().count() as u16;
+        zones.push((x, x + w, g));
+        x += w + 1; // the gap span below
+        tab_spans.push(Span::styled(label, style));
         tab_spans.push(Span::raw(" "));
     }
+    app.tab_zones = zones;
     let sort_hint = Span::styled(
         format!(" sort: {} ", app.sort.label()),
         Style::default().fg(border),
@@ -254,11 +265,14 @@ fn draw_list(
                 .add_modifier(Modifier::BOLD),
         );
 
-    let mut state = ListState::default();
-    if !app.filtered.is_empty() {
-        state.select(Some(app.selected));
-    }
-    f.render_stateful_widget(list, area, &mut state);
+    // The state carries the scroll offset between frames — a click can only be
+    // turned back into an entry if we know which row was showing first. It also
+    // means the list keeps its scroll position instead of re-deriving it from
+    // the top on every frame.
+    let selected = (!app.filtered.is_empty()).then_some(app.selected);
+    app.list_state.select(selected);
+    app.list_area = area;
+    f.render_stateful_widget(list, area, &mut app.list_state);
 }
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Color) {
@@ -337,38 +351,91 @@ fn placeholder(app: &App, frame: usize, area: Rect) -> Text<'static> {
     Text::from(lines)
 }
 
-fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     let t = &app.theme;
     // Dark ink for text sitting on the coloured pills.
     let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
-    let keys: [(&str, &str, Color); 10] = [
-        ("↵", "open", t.or("accent", Color::Cyan)),
-        ("^t", "tab", t.or("green", Color::Green)),
-        ("^s", "split", t.or("yellow", Color::Yellow)),
-        ("^o", "cd", t.or("blue", Color::Blue)),
-        ("^w", "workspace", t.or("mauve", Color::Magenta)),
-        ("^g", "git", t.or("peach", Color::Yellow)),
-        ("^u", "update", t.or("teal", Color::Cyan)),
-        ("^x", "remove", t.or("red", Color::Red)),
-        ("⌥↵", "clone", t.or("blue", Color::Magenta)),
-        ("?", "help", t.or("lavender", Color::White)),
+    let keys: [(&str, &str, Color, Cmd); 10] = [
+        (
+            "↵",
+            "open",
+            t.or("accent", Color::Cyan),
+            Cmd::Accept(Accept::Default),
+        ),
+        (
+            "^t",
+            "tab",
+            t.or("green", Color::Green),
+            Cmd::Accept(Accept::Tab),
+        ),
+        (
+            "^s",
+            "split",
+            t.or("yellow", Color::Yellow),
+            Cmd::Accept(Accept::Split),
+        ),
+        (
+            "^o",
+            "cd",
+            t.or("blue", Color::Blue),
+            Cmd::Accept(Accept::Pane),
+        ),
+        (
+            "^w",
+            "workspace",
+            t.or("mauve", Color::Magenta),
+            Cmd::Accept(Accept::Workspace),
+        ),
+        (
+            "^g",
+            "git",
+            t.or("peach", Color::Yellow),
+            Cmd::Accept(Accept::Git),
+        ),
+        (
+            "^u",
+            "update",
+            t.or("teal", Color::Cyan),
+            Cmd::Accept(Accept::Update),
+        ),
+        (
+            "^x",
+            "remove",
+            t.or("red", Color::Red),
+            Cmd::Accept(Accept::Remove),
+        ),
+        (
+            "⌥↵",
+            "clone",
+            t.or("blue", Color::Magenta),
+            Cmd::Accept(Accept::Clone),
+        ),
+        ("?", "help", t.or("lavender", Color::White), Cmd::Help),
     ];
     let mut spans = vec![Span::raw(" ")];
-    for (key, label, color) in keys.iter() {
+    // The pill is the button: its click zone is measured here, as it is laid
+    // out, so the two cannot disagree about where it ends.
+    let mut x = area.x + 1;
+    let mut zones = Vec::new();
+    for (key, label, color, cmd) in keys.iter() {
         // Each command is a coloured pill: bold key + full label, dark ink.
+        let k = format!(" {key} ");
+        let l = format!("{label} ");
+        let w = (k.chars().count() + l.chars().count()) as u16;
+        zones.push((x, x + w, *cmd));
+        x += w + 1; // the gap span below
         spans.push(Span::styled(
-            format!(" {key} "),
+            k,
             Style::default()
                 .bg(*color)
                 .fg(ink)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(
-            format!("{label} "),
-            Style::default().bg(*color).fg(ink),
-        ));
+        spans.push(Span::styled(l, Style::default().bg(*color).fg(ink)));
         spans.push(Span::raw(" "));
     }
+    app.footer_zones = zones;
+    app.footer_row = area.y;
     let pills_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 
@@ -469,6 +536,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         row("⌥p", mauve, "Toggle preview"),
         row("⌥j / ⌥k", teal, "Scroll the preview"),
         row("wheel", teal, "Scroll whatever is under it"),
+        row("click", teal, "Entry, tab, or a pill below"),
         blank(),
         head(" This plugin"),
         row("⌥c", title, "What's new"),

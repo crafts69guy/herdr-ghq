@@ -18,13 +18,13 @@ required.
 
 ## Requirements
 
-| | |
-| --- | --- |
-| **herdr** ≥ 0.7.4 | the host multiplexer |
-| **[`ghq`](https://github.com/x-motemen/ghq)** | repository source |
-| **[Rust / `cargo`](https://rustup.rs)** | the TUI builds on demand the first time you open it |
-| _optional_ **[`eza`](https://github.com/eza-community/eza)** | richer preview tree |
-| _optional_ **[`git-hub`](https://github.com/crafts69guy/herdr-git-hub)** | the `ctrl-g` handoff |
+|                                                                          |                                                     |
+| ------------------------------------------------------------------------ | --------------------------------------------------- |
+| **herdr** ≥ 0.7.4                                                        | the host multiplexer                                |
+| **[`ghq`](https://github.com/x-motemen/ghq)**                            | repository source                                   |
+| **[Rust / `cargo`](https://rustup.rs)**                                  | the TUI builds on demand the first time you open it |
+| _optional_ **[`eza`](https://github.com/eza-community/eza)**             | richer preview tree                                 |
+| _optional_ **[`git-hub`](https://github.com/crafts69guy/herdr-git-hub)** | the `ctrl-g` handoff                                |
 
 ## Install
 
@@ -52,42 +52,43 @@ herdr server reload-config
 
 **Accept** (`enter`) is kind-aware:
 
-| Highlighted | `enter` |
-| --- | --- |
-| **agent** | jump to it (`herdr agent focus`) |
-| **workspace** | switch to it (`herdr workspace focus`) |
-| **repo** | open it in `default_target` — a new workspace unless configured otherwise |
+| Highlighted   | `enter`                                                                   |
+| ------------- | ------------------------------------------------------------------------- |
+| **agent**     | jump to it (`herdr agent focus`)                                          |
+| **workspace** | switch to it (`herdr workspace focus`)                                    |
+| **repo**      | open it in `default_target` — a new workspace unless configured otherwise |
 
 **Open a repo** (or an agent's cwd) somewhere specific:
 
-| Key | Opens in… |
-| --- | --- |
-| `ctrl-w` | a new **workspace** |
-| `ctrl-t` | a new **tab** |
-| `ctrl-s` | a **split** of the current pane |
-| `ctrl-o` | the **current pane** (`cd`) |
+| Key      | Opens in…                                     |
+| -------- | --------------------------------------------- |
+| `ctrl-w` | a new **workspace**                           |
+| `ctrl-t` | a new **tab**                                 |
+| `ctrl-s` | a **split** of the current pane               |
+| `ctrl-o` | the **current pane** (`cd`)                   |
 | `ctrl-g` | a new tab, handed off to the **git-hub** menu |
 
 **Repo actions:**
 
-| Key | Does |
-| --- | --- |
-| `ctrl-u` | `ghq get -u` on the highlighted repo |
-| `ctrl-x` | remove it — requires typing the repo name to confirm |
-| `alt-enter` | switch to the **clone** flow (`ghq get`) |
+| Key         | Does                                                 |
+| ----------- | ---------------------------------------------------- |
+| `ctrl-u`    | `ghq get -u` on the highlighted repo                 |
+| `ctrl-x`    | remove it — requires typing the repo name to confirm |
+| `alt-enter` | switch to the **clone** flow (`ghq get`)             |
 
 **Browse:**
 
-| Key | Does |
-| --- | --- |
+| Key                 | Does                                                                              |
+| ------------------- | --------------------------------------------------------------------------------- |
 | `tab` / `shift-tab` | cycle the group filter — All → Agents → Workspaces → Repos (empty groups skipped) |
-| `alt-s` | cycle the sort: `recent` → `name` → `kind` |
-| `alt-p` | toggle the preview pane |
-| `alt-j` / `alt-k` | scroll the preview without moving the selection |
-| wheel | scroll the pane under the pointer — the card over the preview, the list elsewhere |
-| `alt-c` | read the changelog over the list (`esc` returns to the same entry) |
-| `alt-u` | update the plugin itself (vs `ctrl-u`, which updates the highlighted repo) |
-| `?` | toggle the keybindings cheatsheet |
+| `alt-s`             | cycle the sort: `recent` → `name` → `kind`                                        |
+| `alt-p`             | toggle the preview pane                                                           |
+| `alt-j` / `alt-k`   | scroll the preview without moving the selection                                   |
+| wheel               | scroll the pane under the pointer — the card over the preview, the list elsewhere |
+| click               | an entry selects it, a group tab filters, a command-bar pill runs that command    |
+| `alt-c`             | read the changelog over the list (`esc` returns to the same entry)                |
+| `alt-u`             | update the plugin itself (vs `ctrl-u`, which updates the highlighted repo)        |
+| `?`                 | toggle the keybindings cheatsheet                                                 |
 
 Sorting defaults to `recent`, so repos you opened last float to the top; opens are recorded
 in `${XDG_STATE_HOME:-~/.local/state}/herdr-ghq/recent.tsv`. While you type, fuzzy score
@@ -97,14 +98,14 @@ orders the list — sort only applies to the resting, no-query list.
 
 Bind any of these the same way as `ghq.menu`:
 
-| Action | Does |
-| --- | --- |
-| `ghq.menu` | the switcher |
-| `ghq.get` | the clone flow |
-| `ghq.settings` | the settings dashboard |
-| `ghq.changelog` | what changed, with your installed version marked |
-| `ghq.update-plugin` | install a newer version (refuses to touch a `link`ed checkout) |
-| `ghq.open-workspace` · `ghq.open-tab` · `ghq.open-split` | the switcher with `enter`'s repo target forced |
+| Action                                                   | Does                                                           |
+| -------------------------------------------------------- | -------------------------------------------------------------- |
+| `ghq.menu`                                               | the switcher                                                   |
+| `ghq.get`                                                | the clone flow                                                 |
+| `ghq.settings`                                           | the settings dashboard                                         |
+| `ghq.changelog`                                          | what changed, with your installed version marked               |
+| `ghq.update-plugin`                                      | install a newer version (refuses to touch a `link`ed checkout) |
+| `ghq.open-workspace` · `ghq.open-tab` · `ghq.open-split` | the switcher with `enter`'s repo target forced                 |
 
 ## Configuration
 
@@ -115,16 +116,16 @@ invocation; no server reload needed.
 
 Every key is documented in `examples/config.toml`. The ones you're most likely to want:
 
-| Key | Values |
-| --- | --- |
-| `default_target` | `workspace` (default) · `tab` · `split` · `pane` |
-| `include_agents` / `include_workspaces` | blend agents/workspaces into the list |
-| `sort` | `recent` (default) · `name` · `kind` |
-| `label` | workspace/tab label: `repo` · `owner-repo` · `path` |
-| `preview` / `preview_readme` | the preview pane |
-| `clone_source` | seed the clone prompt from the `clipboard` (default) or start blank |
-| `split_direction` / `split_ratio` | geometry for split targets |
-| `update_check` | ask GitHub once a day whether a newer version is tagged (`true` by default) |
+| Key                                     | Values                                                                      |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| `default_target`                        | `workspace` (default) · `tab` · `split` · `pane`                            |
+| `include_agents` / `include_workspaces` | blend agents/workspaces into the list                                       |
+| `sort`                                  | `recent` (default) · `name` · `kind`                                        |
+| `label`                                 | workspace/tab label: `repo` · `owner-repo` · `path`                         |
+| `preview` / `preview_readme`            | the preview pane                                                            |
+| `clone_source`                          | seed the clone prompt from the `clipboard` (default) or start blank         |
+| `split_direction` / `split_ratio`       | geometry for split targets                                                  |
+| `update_check`                          | ask GitHub once a day whether a newer version is tagged (`true` by default) |
 
 The switcher is themed from herdr's `[theme.custom]`, and previews each kind as a card —
 a header with the entry's state as a pill, aligned `label value` rows, then bodies under

@@ -126,7 +126,7 @@ impl Config {
 
 // --- entries ---------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Agent,
     Workspace,
@@ -183,7 +183,7 @@ impl SortMode {
 }
 
 /// Which group the list is narrowed to. `All` blends every source.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GroupFilter {
     All,
     Only(Kind),

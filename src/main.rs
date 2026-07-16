@@ -19,11 +19,14 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as NucleoConfig, Matcher, Utf32Str};
 use ratatui::layout::{Position, Rect};
 use ratatui::text::Text;
+use ratatui::widgets::ListState;
 
 use action::Accept;
 use data::{Config, Entry, GroupFilter, Kind, SortMode, Theme};
@@ -63,6 +66,20 @@ pub struct App {
     /// one card line is one screen row, so this and [`App::preview_rows`] bound
     /// the scroll exactly.
     pub preview_len: u16,
+    /// Where the list sat at the last draw, and the state it was drawn with.
+    /// The state is kept rather than rebuilt per frame because its scroll offset
+    /// is the only thing that can turn a clicked row back into an entry.
+    pub list_area: Rect,
+    pub list_state: ListState,
+    /// Click targets published by the last draw: the group tabs along the list's
+    /// top border, and the command bar's pills. Each is an `x` span on a known
+    /// row. They are built by the same loops that draw them, so a zone cannot
+    /// drift from the thing the user is aiming at.
+    pub tab_zones: Vec<(u16, u16, GroupFilter)>,
+    pub footer_zones: Vec<(u16, u16, Cmd)>,
+    /// The command bar's row — it is one row tall, so this plus a zone's `x`
+    /// span is the whole hit test.
+    pub footer_row: u16,
     pub show_help: bool,
     /// A newer version the cache knows about; shown, never acted on.
     pub update: Option<String>,
@@ -85,6 +102,14 @@ enum Flow {
     Continue,
     Quit,
     Accept(Accept),
+}
+
+/// What a pill on the command bar does when clicked. Every pill but `?` stands
+/// for an [`Accept`]; `?` is the one that only opens a popup.
+#[derive(Clone, Copy)]
+pub enum Cmd {
+    Accept(Accept),
+    Help,
 }
 
 impl App {
@@ -133,6 +158,13 @@ impl App {
             // Filled by the first draw, which always precedes the first request.
             preview_area: None,
             preview_len: 0,
+            // A zero rect contains no point, so clicks land nowhere until the
+            // first draw says where things are.
+            list_area: Rect::default(),
+            list_state: ListState::default(),
+            tab_zones: Vec::new(),
+            footer_zones: Vec::new(),
+            footer_row: 0,
             show_help: false,
             update,
             show_changelog: false,
@@ -226,6 +258,68 @@ impl App {
     fn scroll_preview(&mut self, delta: i32) {
         let max = self.preview_len.saturating_sub(self.preview_rows()) as i32;
         self.preview_scroll = (self.preview_scroll as i32 + delta).clamp(0, max) as u16;
+    }
+
+    /// The entry drawn at screen row `y`, if that row holds one. Rows map back
+    /// through the offset the list was last drawn with — the first visible row
+    /// is `offset`, not 0, which is why the [`ListState`] is kept across frames.
+    fn entry_at(&self, y: u16) -> Option<usize> {
+        // The block's top border is the tab strip, not a row of the list.
+        let first = self.list_area.y + 1;
+        let row = y.checked_sub(first)? as usize;
+        let idx = self.list_state.offset() + row;
+        (idx < self.filtered.len()).then_some(idx)
+    }
+
+    /// A left click. Selects an entry, switches a group, or runs a command —
+    /// whatever it landed on.
+    fn on_click(&mut self, at: Position) -> Flow {
+        // A popup is modal: the click dismisses it and means nothing else, the
+        // way any key does.
+        if self.show_help {
+            self.show_help = false;
+            return Flow::Continue;
+        }
+        if self.show_changelog {
+            self.show_changelog = false;
+            return Flow::Continue;
+        }
+        // The command bar: one row, so the x span is the whole test.
+        if let Some(&(_, _, cmd)) = self
+            .footer_zones
+            .iter()
+            .find(|&&(a, b, _)| at.y == self.footer_row && at.x >= a && at.x < b)
+        {
+            return match cmd {
+                // Acting on nothing would be a no-op with a confirmation prompt.
+                Cmd::Accept(_) if self.selected_entry().is_none() => Flow::Continue,
+                Cmd::Accept(a) => Flow::Accept(a),
+                Cmd::Help => {
+                    self.show_help = true;
+                    Flow::Continue
+                }
+            };
+        }
+        // The tab strip rides the list's top border.
+        if at.y == self.list_area.y {
+            if let Some(&(_, _, g)) = self
+                .tab_zones
+                .iter()
+                .find(|&&(a, b, _)| at.x >= a && at.x < b)
+            {
+                if g != self.group {
+                    self.group = g;
+                    self.recompute();
+                }
+                return Flow::Continue;
+            }
+        }
+        if self.list_area.contains(at) {
+            if let Some(idx) = self.entry_at(at.y) {
+                self.selected = idx;
+            }
+        }
+        Flow::Continue
     }
 
     /// A wheel turn moves the pane under the pointer: the card when it is over
@@ -549,14 +643,22 @@ fn run(
         match event::read()? {
             Event::Mouse(m) => {
                 let at = Position::new(m.column, m.row);
-                let delta = match m.kind {
-                    MouseEventKind::ScrollDown => 1,
-                    MouseEventKind::ScrollUp => -1,
-                    // A click or a drag: herdr owns those, and this pane has
-                    // nothing to say about them.
+                match m.kind {
+                    MouseEventKind::ScrollDown => {
+                        app.on_wheel(at, 1);
+                    }
+                    MouseEventKind::ScrollUp => {
+                        app.on_wheel(at, -1);
+                    }
+                    MouseEventKind::Down(MouseButton::Left) => match app.on_click(at) {
+                        Flow::Continue => {}
+                        Flow::Quit => return Ok(None),
+                        Flow::Accept(a) => return Ok(Some((app.selected_entry().cloned(), a))),
+                    },
+                    // Releases and drags: nothing here acts on them, and
+                    // redrawing for them would be churn.
                     _ => continue,
-                };
-                app.on_wheel(at, delta);
+                }
             }
             Event::Key(k) => {
                 if k.kind != KeyEventKind::Press {
@@ -764,6 +866,83 @@ mod tests {
         let mut app = app_with_preview(5, 20);
         app.scroll_preview(3);
         assert_eq!(app.preview_scroll, 0);
+    }
+
+    /// An app laid out the way a draw would leave it: a list at 0,0 and a
+    /// command bar on row 30 carrying one `open` pill spanning columns 1..8.
+    fn app_with_layout() -> App {
+        let mut app = app_with_preview(60, 20);
+        app.list_area = Rect::new(0, 10, 40, 12);
+        app.footer_row = 30;
+        app.footer_zones = vec![(1, 8, Cmd::Accept(Accept::Default))];
+        app.tab_zones = vec![
+            (1, 6, GroupFilter::All),
+            (7, 15, GroupFilter::Only(Kind::Repo)),
+        ];
+        app
+    }
+
+    fn is_accept(flow: Flow) -> bool {
+        matches!(flow, Flow::Accept(_))
+    }
+
+    #[test]
+    fn clicking_a_row_selects_that_entry() {
+        let mut app = app_with_layout();
+        // Row 10 is the top border (the tab strip); the list starts at 11.
+        app.on_click(Position::new(5, 13));
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn clicking_a_row_reads_through_the_scroll_offset() {
+        let mut app = app_with_layout();
+        // Scrolled down: the first visible row is entry 1, not entry 0. Getting
+        // this wrong selects a different entry than the one under the pointer.
+        *app.list_state.offset_mut() = 1;
+        app.on_click(Position::new(5, 11));
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn clicking_past_the_last_entry_selects_nothing() {
+        let mut app = app_with_layout();
+        app.selected = 2;
+        // The list is 12 rows tall but holds 4 entries; this is empty space.
+        app.on_click(Position::new(5, 20));
+        assert_eq!(
+            app.selected, 2,
+            "the selection must survive a click on nothing"
+        );
+    }
+
+    #[test]
+    fn clicking_a_pill_runs_its_command() {
+        let mut app = app_with_layout();
+        assert!(is_accept(app.on_click(Position::new(3, 30))));
+    }
+
+    #[test]
+    fn clicking_beside_the_pills_does_nothing() {
+        let mut app = app_with_layout();
+        assert!(!is_accept(app.on_click(Position::new(60, 30))));
+    }
+
+    #[test]
+    fn clicking_a_tab_switches_the_group() {
+        let mut app = app_with_layout();
+        // The strip rides the list's top border, row 10.
+        app.on_click(Position::new(8, 10));
+        assert_eq!(app.group, GroupFilter::Only(Kind::Repo));
+    }
+
+    #[test]
+    fn a_click_dismisses_the_help_popup_and_nothing_else() {
+        let mut app = app_with_layout();
+        app.show_help = true;
+        // Aimed straight at a pill: the popup is modal, so it must swallow this.
+        assert!(!is_accept(app.on_click(Position::new(3, 30))));
+        assert!(!app.show_help);
     }
 
     #[test]

@@ -11,15 +11,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Both plugin actions are now reachable from the switcher itself: `⌥c` reads the
   changelog and `⌥u` updates the plugin, alongside `^u` which updates the highlighted
-  *repo*. Both are listed under `?`.
+  _repo_. Both are listed under `?`.
 
   `⌥c` draws over the list rather than replacing it, so reading what changed does not
   cost you your place — `esc` puts you back on the same entry. It shares the parser and
   renderer with the `ghq.changelog` pane, so the two cannot drift apart.
 
+- **The switcher takes the mouse.** Click an entry to select it, a group tab to filter,
+  and a pill on the command bar to run that command on the selection — the pills were
+  always the list of what the keys do, so they are now the buttons for it too. A click
+  dismisses a popup the way any key does. Nothing needs the mouse: every action still has
+  its key, and the pills still say which.
 - **The mouse wheel scrolls the pane under the pointer** — the card over the preview,
-  the list anywhere else. The switcher asks for wheel reporting only, not the pointer
-  motion crossterm's mouse capture would also turn on, so clicks and drags stay herdr's.
+  the list anywhere else. The switcher asks for wheel and button reporting only, not the
+  pointer motion crossterm's mouse capture would also turn on, so drags stay herdr's.
 - **The preview scrolls**, with `⌥j` / `⌥k` — the `⌥` echo of the `^j` / `^k` that move
   the list, so the two panes move under the same fingers. The pane says `⌥jk 24/64` while
   there is anything below the fold, and stays quiet when the card fits. A card is 60-odd
@@ -49,7 +54,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A **workspace preview lists its tabs** — each with its live status, pane count, and a
   marker on the active one. It only ever showed counts before.
 - An **agent's recent output is clipped to the preview pane** instead of wrapped. The
-  output arrives at the *agent's* pane width, which is far wider than the preview, so
+  output arrives at the _agent's_ pane width, which is far wider than the preview, so
   wrapping shredded every line into fragments. Blank runs are collapsed too, so what you
   see is the output rather than the empty half of somebody's screen.
 - **`jq` is no longer a requirement of any kind.** The preview was the last thing that
@@ -88,6 +93,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the fetch takes a few — a thread inside it would be killed before it finished.
   Offline, unreachable, or rate-limited, nothing is shown and the switcher opens as
   always.
+
 - A **changelog viewer**: the `ghq.changelog` action opens this file as a popup, in the
   switcher's colours, with the version you are running marked `← installed`. It reads
   the `CHANGELOG.md` that ships beside the plugin, so it needs no network and always
@@ -132,7 +138,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read it, so Enter always fell back to `default_target`. A forced target now wins
   over `default_target`, and unrecognised values on either degrade to `workspace`
   rather than failing the open. Enter on an agent or workspace still focuses that
-  entry — forcing a target only changes where a *repo* lands.
+  entry — forcing a target only changes where a _repo_ lands.
 - Panes that herdr reports with a terminal id but no agent label — stale or
   half-detected entries — no longer appear in the list as an agent named "agent".
 

@@ -45,10 +45,10 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
    user's shell additions.
 3. The TUI (`src/`) loads entries, runs the event loop, and — **after `ratatui::restore()`** —
    dispatches the accepted action. Interactive accepts (clone prompt, remove confirmation, `ghq
-   get -u` output) deliberately run on the torn-down terminal, not inside the TUI.
+get -u` output) deliberately run on the torn-down terminal, not inside the TUI.
 
 **Why the origin pane matters:** `split` and `pane` targets act on the captured `GHQ_ORIGIN_PANE_ID`.
-The overlay pane is *not* the user's pane. Never guess or infer a pane/workspace/agent id — every id
+The overlay pane is _not_ the user's pane. Never guess or infer a pane/workspace/agent id — every id
 must come from `herdr agent list`, `herdr workspace list`, or the captured origin.
 
 **Module split (`src/`):**
@@ -87,6 +87,12 @@ order so the list stays stable.
   Do not add a TOML crate or nested keys without changing both parsers and the writer in
   `src/settings.rs` (`write_setting`), which preserves comments and hand-added keys.
   Theme parsing (`[theme.custom]` from herdr's config) is a separate hand-rolled scanner.
+- **A click zone is measured by the loop that draws the thing.** `tab_zones` and
+  `footer_zones` (`src/ui.rs`) are built inside the same loops that lay out the tab strip
+  and the command bar, because a zone computed separately drifts the moment a label
+  changes — and drifts _silently_, into clicking the wrong action. `list_state` is kept
+  on the `App` for the same reason: its scroll offset is the only thing that turns a
+  clicked row back into an entry, so it cannot be a fresh `ListState` per frame.
 - **The wheel is turned on by hand, and must be turned off on every exit path.** `main.rs`
   writes `?1000h`/`?1006h` itself rather than using crossterm's `EnableMouseCapture`, which
   also enables any-event tracking (`?1003h`) — every pointer move would wake the loop into
@@ -101,7 +107,7 @@ order so the list stays stable.
   `draw_preview` therefore has no `Wrap`. Re-adding one, or emitting an unclipped line,
   breaks the scroll silently: the offset drifts from the content instead of erroring. The
   pane's width reaches the worker through `App::preview_width`, published by `ui::draw`,
-  which is why `run` draws *before* it calls `request_preview`.
+  which is why `run` draws _before_ it calls `request_preview`.
 - **Nothing uses `jq` — keep it that way.** No code path shells out to it: the bash layer reads
   herdr's JSON with the awk-based `json_string_value` / `json_bool_value` in `bin/lib.sh`, and the
   Rust layer uses `serde_json` (`data.rs`, `preview.rs`). It is not a documented requirement, so a
@@ -111,18 +117,18 @@ order so the list stays stable.
   for the `open-workspace` / `open-tab` / `open-split` hot-path actions; `src/action.rs`
   (`forced_target` + `resolve_default_target`) resolves it once in `main` and passes it to
   `dispatch`. Enter on an **agent** or **workspace** still focuses that entry — forcing a target
-  only changes where a *repo* lands, matching the manifest's "Pick a repo; Enter opens it in…".
+  only changes where a _repo_ lands, matching the manifest's "Pick a repo; Enter opens it in…".
   Invalid values on either the env var or the config degrade to `workspace` instead of erroring.
 - **Version sync:** `Cargo.toml` and `herdr-plugin.toml` versions must match; `tests/manifest_spec.sh`
   enforces it. `bin/release.sh` bumps both, so bump through it rather than by hand.
 - **The changelog is the release notes.** Every user-facing change adds a line to
-  `CHANGELOG.md`'s `[Unreleased]` section *in the same commit*; `bin/release.sh` promotes that
+  `CHANGELOG.md`'s `[Unreleased]` section _in the same commit_; `bin/release.sh` promotes that
   section to a dated one and feeds it verbatim to `gh release create`. Commits are not
   Conventional Commits and nothing is generated from `git log` — an empty `[Unreleased]` aborts
   the release.
 - **The TUI never makes a network request.** `update.rs` spawns a detached `--update-check`
   child (own process group, no stdio) that runs `git ls-remote` and writes a cache; the picker
-  only ever reads that file, so the badge lands on a *later* launch. Do not "simplify" this into
+  only ever reads that file, so the badge lands on a _later_ launch. Do not "simplify" this into
   a thread: the picker frequently exits in under a second and the fetch takes several, so the
   cache would never be written. `git ls-remote` over the GitHub API on purpose — no `jq`, no
   60/hour unauthenticated rate limit, no auth. Everything fails silently.
@@ -133,7 +139,7 @@ order so the list stays stable.
   stubs `herdr` through `HERDR_BIN_PATH` and asserts every case. Never widen the guard without
   extending that spec, and never name a real mutating command inside backticks in it.
 - **An update must force a rebuild.** `target/` is gitignored, so re-fetching the source leaves
-  the old binary in place and `bin/picker.sh` only builds when the binary is *missing* — the new
+  the old binary in place and `bin/picker.sh` only builds when the binary is _missing_ — the new
   code would ship with the old switcher still running. `update-plugin.sh` removes it and rebuilds.
 - **`ctrl-x` (remove) is the only destructive path.** It requires typing the repo name to confirm.
   Preserve that; test against disposable repos.
