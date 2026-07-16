@@ -510,15 +510,24 @@ fn repo_card(
     lines
 }
 
-/// The README excerpt with the little markdown worth styling at this size:
-/// headings in the title colour, bullets marked in the accent, and inline
-/// `code` / `**bold**` through the changelog's own renderer — so a README here
-/// and the `⌥c` popup treat markdown the same way.
+/// How much of a README the card carries.
+///
+/// The old cut was 30 lines, from when the pane could not scroll and anything
+/// past the first screen was unreachable anyway. Now that `⌥j`/`⌥k` move it,
+/// that cut only hid the text the reader had scrolled down to find. What is
+/// left is a bound on pathological files, not an editorial choice — and it is
+/// announced rather than silent.
+const README_LINES: usize = 400;
+
+/// The README with the little markdown worth styling at this size: headings in
+/// the title colour, bullets marked in the accent, and inline `code` /
+/// `**bold**` through the changelog's own renderer — so a README here and the
+/// `⌥c` popup treat markdown the same way.
 fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
     let base = Style::default().fg(p.sub);
     let code = Style::default().fg(p.accent);
     let mut out = Vec::new();
-    for raw in body.lines().take(30) {
+    for raw in body.lines().take(README_LINES) {
         // Links flatten to their text: a preview this narrow has no room for a
         // URL, and the badge markup at the top of a README is mostly URL. An
         // image is demoted to a link first, so it flattens to its alt text
@@ -541,6 +550,13 @@ fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
             Line::from(crate::changelog::spans(&row, base, code))
         };
         out.push(clip_line(line, width as usize));
+    }
+    // Say what was left out, so a card that ends early never reads as a README
+    // that ends there.
+    let total = body.lines().count();
+    if total > README_LINES {
+        out.push(Line::raw(""));
+        out.push(note(&format!("… {} more lines", total - README_LINES), p));
     }
     out
 }
@@ -667,6 +683,32 @@ mod tests {
         // Nothing of the green or blue span survives a width the red one fills.
         assert_eq!(line.spans.len(), 1);
         assert_eq!(line.spans[0].content, "aaaa");
+    }
+
+    #[test]
+    fn readme_carries_a_normal_file_whole() {
+        let p = Ink::new(&Theme::default(), &Config::default());
+        let body: String = (1..=120).map(|i| format!("line {i}\n")).collect();
+        // Well past the 30 lines the pre-scrolling card used to stop at.
+        assert_eq!(readme_lines(&body, 76, &p).len(), 120);
+    }
+
+    #[test]
+    fn readme_says_how_much_it_left_out() {
+        let p = Ink::new(&Theme::default(), &Config::default());
+        let body: String = (1..=README_LINES + 100)
+            .map(|i| format!("line {i}\n"))
+            .collect();
+        let out = readme_lines(&body, 76, &p);
+        let last: String = out
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        // A card that stops early must never read as a README that stops there.
+        assert!(last.contains("100 more lines"), "got {last:?}");
     }
 
     #[test]

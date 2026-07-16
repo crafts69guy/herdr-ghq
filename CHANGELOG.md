@@ -28,10 +28,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **An agent's output keeps the agent's colours.** herdr can hand back the escape
   sequences from the agent's own screen, so its diffs, syntax highlighting, and status
   line now read in the preview the way they read in the pane, instead of as flat text.
-- **A README excerpt is rendered as markdown**, not dumped: headings in the title colour,
-  bullets marked, inline `code` and `**bold**` styled, and links flattened to their text
-  — a pane this narrow has no room for a URL, and the badges at the top of a README are
-  mostly URL. It shares the renderer with the `⌥c` changelog popup.
+- **A README is rendered as markdown**, not dumped: headings in the title colour, bullets
+  marked, inline `code` and `**bold**` styled, and links flattened to their text — a pane
+  this narrow has no room for a URL, and the badges at the top of a README are mostly URL.
+  It shares the renderer with the `⌥c` changelog popup.
+- **The whole README is there**, where the card used to stop at 30 lines. That cut dates
+  from a preview that could not scroll, when anything past the first screen was
+  unreachable anyway; with `⌥j`/`⌥k` it only hid the text you had scrolled down to read.
+  A 400-line bound remains for pathological files, and a card that hits it now says how
+  many lines it left out rather than ending as if the README did.
 - The preview is now a **card**: a header carrying the entry's name and its state as a
   filled pill, a column of aligned `label   value` rows, then each body under a
   captioned rule. It is drawn from your herdr `[theme.custom]` colours like the rest of
