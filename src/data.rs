@@ -81,6 +81,7 @@ fn parse_hex(raw: &str) -> Option<Color> {
 // --- plugin config ---------------------------------------------------------
 
 /// Flat `key = value` config from the plugin's config dir.
+#[derive(Clone)]
 pub struct Config {
     map: HashMap<String, String>,
 }

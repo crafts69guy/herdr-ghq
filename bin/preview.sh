@@ -30,7 +30,11 @@ repo_body() {
   [[ -n "$last" ]] && printf '  \033[2m%s\033[0m\n' "$last"
   printf '\n'
   if command -v eza >/dev/null 2>&1; then
-    eza --tree --level=2 --color=always --icons -- "$d" 2>/dev/null | head -48
+    # Pruning the usual heavy dirs keeps the tree cheap on big repos; walking
+    # them costs more than the 48 lines we keep. (--git-ignore is slower still:
+    # it reads the ignore rules for every entry.)
+    eza --tree --level=2 --color=always --icons \
+      -I 'node_modules|.git|target|dist|build|.next|vendor' -- "$d" 2>/dev/null | head -48
   else
     # shellcheck disable=SC2012 # plain listing fallback; filenames here are benign
     ls -la -- "$d" 2>/dev/null | head -40

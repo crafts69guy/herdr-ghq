@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -35,6 +36,15 @@ pub struct App {
     pub script_dir: String,
     pub preview: Text<'static>,
     preview_id: String,
+    preview_worker: preview::Worker,
+    /// Seq of the newest render requested; results tagged older are stale.
+    preview_seq: u64,
+    /// A render is queued or running, so the shown preview is one entry behind.
+    preview_pending: bool,
+    /// When the in-flight render started, for the placeholder's grace + phase.
+    preview_since: Option<Instant>,
+    /// Name of the entry being rendered, shown under the placeholder spinner.
+    pub preview_label: String,
     pub preview_enabled: bool,
     pub preview_position: String,
     pub preview_pct: u16,
@@ -79,6 +89,7 @@ impl App {
             .into_iter()
             .filter(|&k| entries.iter().any(|e| e.kind == k))
             .collect();
+        let preview_worker = preview::Worker::spawn(script_dir.clone(), root.clone(), cfg.clone());
         let mut app = App {
             entries,
             filtered: Vec::new(),
@@ -92,6 +103,11 @@ impl App {
             script_dir,
             preview: Text::default(),
             preview_id: String::new(),
+            preview_worker,
+            preview_seq: 0,
+            preview_pending: false,
+            preview_since: None,
+            preview_label: String::new(),
             preview_enabled,
             preview_position,
             preview_pct,
@@ -156,7 +172,7 @@ impl App {
     fn toggle_preview(&mut self) {
         self.preview_enabled = !self.preview_enabled;
         if self.preview_enabled {
-            // Force update_preview to rebuild for the current selection.
+            // Force request_preview to re-queue for the current selection.
             self.preview_id.clear();
         }
     }
@@ -175,7 +191,9 @@ impl App {
         self.filtered.get(self.selected).map(|&i| &self.entries[i])
     }
 
-    fn update_preview(&mut self) {
+    /// Queues a preview render for the current selection if it changed. Never
+    /// blocks: the worker renders while the UI keeps taking keys.
+    fn request_preview(&mut self) {
         let idx = match self.filtered.get(self.selected) {
             Some(&i) => i,
             None => return,
@@ -184,11 +202,48 @@ impl App {
             return;
         }
         self.preview_id = self.entries[idx].id.clone();
-        if self.preview_enabled {
-            let e = self.entries[idx].clone();
-            self.preview = preview::render(&e, &self.script_dir, &self.root, &self.cfg);
-            self.preview_scroll = 0;
+        if !self.preview_enabled {
+            return;
         }
+        self.preview_seq += 1;
+        let entry = self.entries[idx].clone();
+        self.preview_label = entry.primary.clone();
+        self.preview_pending = self.preview_worker.request(self.preview_seq, entry);
+        self.preview_since = Some(Instant::now());
+    }
+
+    fn preview_pending(&self) -> bool {
+        self.preview_pending
+    }
+
+    /// Frame index for the pending placeholder, or `None` when the shown
+    /// preview is current. Renders that finish inside `PLACEHOLDER_GRACE` —
+    /// agents, small repos — never reach frame 0, so the pane doesn't flash.
+    pub fn placeholder_frame(&self) -> Option<usize> {
+        if !self.preview_pending {
+            return None;
+        }
+        let waited = self
+            .preview_since?
+            .elapsed()
+            .checked_sub(PLACEHOLDER_GRACE)?;
+        Some((waited.as_millis() / PLACEHOLDER_FRAME.as_millis()) as usize)
+    }
+
+    /// Installs a finished preview, reporting whether the UI needs a redraw.
+    /// Results for entries already scrolled past are dropped.
+    fn absorb_preview(&mut self) -> bool {
+        let mut installed = false;
+        while let Some(done) = self.preview_worker.poll() {
+            if done.seq != self.preview_seq {
+                continue; // stale: the selection moved on
+            }
+            self.preview = done.text;
+            self.preview_scroll = 0;
+            self.preview_pending = false;
+            installed = true;
+        }
+        installed
     }
 }
 
@@ -318,13 +373,51 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     }
 }
 
+/// Wake cadence while a preview render is in flight — short enough that the
+/// result appears promptly, long enough to cost nothing.
+const PREVIEW_TICK: Duration = Duration::from_millis(16);
+/// Wake cadence with nothing in flight; the loop is just parked on the keyboard.
+const IDLE_TICK: Duration = Duration::from_secs(1);
+/// How long a render may take before the placeholder replaces the stale preview.
+const PLACEHOLDER_GRACE: Duration = Duration::from_millis(90);
+/// Placeholder animation frame length.
+const PLACEHOLDER_FRAME: Duration = Duration::from_millis(80);
+
+/// Blocks until there is something to draw: a key, a finished preview, or the
+/// next placeholder frame.
+fn wait_for_work(app: &mut App) -> Result<()> {
+    let entered_on = app.placeholder_frame();
+    loop {
+        let tick = if app.preview_pending() {
+            PREVIEW_TICK
+        } else {
+            IDLE_TICK
+        };
+        if event::poll(tick)? {
+            return Ok(()); // a key is waiting: it takes priority
+        }
+        if app.absorb_preview() {
+            return Ok(());
+        }
+        // Redraw on a frame change only — polling at 16ms must not drag the
+        // 80ms animation up to a 60fps repaint.
+        if app.placeholder_frame() != entered_on {
+            return Ok(());
+        }
+    }
+}
+
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
 ) -> Result<Option<(Option<Entry>, Accept)>> {
     loop {
-        app.update_preview();
+        app.request_preview();
         terminal.draw(|f| ui::draw(f, app))?;
+        wait_for_work(app)?;
+        if !event::poll(Duration::ZERO)? {
+            continue; // woke for a finished preview, not a key: redraw it
+        }
         if let Event::Key(k) = event::read()? {
             if k.kind != KeyEventKind::Press {
                 continue;

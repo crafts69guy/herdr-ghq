@@ -3,7 +3,7 @@
 
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
@@ -199,11 +199,65 @@ fn draw_list(
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Color) {
     let block = boxed("󰈈 Preview", title, border);
-    let para = Paragraph::new(app.preview.clone())
+    // A slow render shows the placeholder rather than the previous entry's
+    // preview, which would otherwise read as the current one.
+    let (body, scroll) = match app.placeholder_frame() {
+        Some(frame) => (placeholder(app, frame, area), 0),
+        None => (app.preview.clone(), app.preview_scroll),
+    };
+    let para = Paragraph::new(body)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((app.preview_scroll, 0));
+        .scroll((scroll, 0));
     f.render_widget(para, area);
+}
+
+/// Braille spinner over a travelling wave, centred in the preview pane, shown
+/// while the worker renders. `frame` advances once per animation tick.
+fn placeholder(app: &App, frame: usize, area: Rect) -> Text<'static> {
+    const SPINNER: [&str; 8] = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
+    const WAVE: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    let accent = app.theme.or("accent", Color::Cyan);
+    let sub = app.theme.or("subtext0", Color::DarkGray);
+    // Inside the block's borders.
+    let width = area.width.saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
+
+    let wave: String = (0..width.min(28))
+        .map(|i| {
+            // Each column trails the one before it, so the crest travels right.
+            let phase = i as f32 * 0.6 - frame as f32 * 0.5;
+            let level = (phase.sin() + 1.0) / 2.0 * (WAVE.len() - 1) as f32;
+            WAVE[(level.round() as usize).min(WAVE.len() - 1)]
+        })
+        .collect();
+
+    let mut label = app.preview_label.clone();
+    if label.chars().count() > width {
+        label = label.chars().take(width.saturating_sub(1)).collect();
+        label.push('…');
+    }
+
+    let centred = |s: String, style: Style| {
+        let pad = width.saturating_sub(s.chars().count()) / 2;
+        Line::from(vec![Span::raw(" ".repeat(pad)), Span::styled(s, style)])
+    };
+
+    // The block is 5 rows tall; sit it in the middle of the pane.
+    let mut lines: Vec<Line> = vec![Line::raw(""); height.saturating_sub(5) / 2];
+    lines.push(centred(
+        SPINNER[frame % SPINNER.len()].to_string(),
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+    ));
+    lines.push(Line::raw(""));
+    lines.push(centred(label, Style::default().fg(sub)));
+    lines.push(Line::raw(""));
+    lines.push(centred(
+        wave,
+        Style::default().fg(accent).add_modifier(Modifier::DIM),
+    ));
+    Text::from(lines)
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
