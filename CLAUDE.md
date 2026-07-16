@@ -87,6 +87,14 @@ order so the list stays stable.
   Do not add a TOML crate or nested keys without changing both parsers and the writer in
   `src/settings.rs` (`write_setting`), which preserves comments and hand-added keys.
   Theme parsing (`[theme.custom]` from herdr's config) is a separate hand-rolled scanner.
+- **The wheel is turned on by hand, and must be turned off on every exit path.** `main.rs`
+  writes `?1000h`/`?1006h` itself rather than using crossterm's `EnableMouseCapture`, which
+  also enables any-event tracking (`?1003h`) — every pointer move would wake the loop into
+  a redraw for an event we discard. `init_terminal`/`restore_terminal` pair it, and
+  `init_terminal` chains the disable ahead of the panic hook `ratatui::init` installs,
+  since that hook restores the screen but knows nothing about the wheel. Leaving it on
+  drops mouse escapes into the user's shell. The picker only claims the wheel: clicks and
+  drags stay herdr's, which runs with `mouse_capture = true`.
 - **The preview clips; it must never wrap.** Every body goes through `clip`/`clip_line`
   (`src/preview.rs`) so one card line is exactly one screen row — that is what makes
   `preview_scroll` mean what it says and `preview_len`/`preview_rows` bound it correctly.

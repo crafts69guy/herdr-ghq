@@ -17,6 +17,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cost you your place — `esc` puts you back on the same entry. It shares the parser and
   renderer with the `ghq.changelog` pane, so the two cannot drift apart.
 
+- **The mouse wheel scrolls the pane under the pointer** — the card over the preview,
+  the list anywhere else. The switcher asks for wheel reporting only, not the pointer
+  motion crossterm's mouse capture would also turn on, so clicks and drags stay herdr's.
 - **The preview scrolls**, with `⌥j` / `⌥k` — the `⌥` echo of the `^j` / `^k` that move
   the list, so the two panes move under the same fingers. The pane says `⌥jk 24/64` while
   there is anything below the fold, and stays quiet when the card fits. A card is 60-odd

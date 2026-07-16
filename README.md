@@ -84,6 +84,7 @@ herdr server reload-config
 | `alt-s` | cycle the sort: `recent` → `name` → `kind` |
 | `alt-p` | toggle the preview pane |
 | `alt-j` / `alt-k` | scroll the preview without moving the selection |
+| wheel | scroll the pane under the pointer — the card over the preview, the list elsewhere |
 | `alt-c` | read the changelog over the list (`esc` returns to the same entry) |
 | `alt-u` | update the plugin itself (vs `ctrl-u`, which updates the highlighted repo) |
 | `?` | toggle the keybindings cheatsheet |

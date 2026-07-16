@@ -13,14 +13,16 @@ mod update;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::env;
+use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as NucleoConfig, Matcher, Utf32Str};
+use ratatui::layout::{Position, Rect};
 use ratatui::text::Text;
 
 use action::Accept;
@@ -51,15 +53,16 @@ pub struct App {
     pub preview_position: String,
     pub preview_pct: u16,
     pub preview_scroll: u16,
-    /// Inner width of the preview pane at the last draw. The card clips its
-    /// bodies to this instead of wrapping them, so a render needs it up front —
-    /// hence `run` draws before it requests.
-    pub preview_width: u16,
-    /// Rows the current card occupies, and rows the pane can show. Because the
-    /// card clips rather than wraps, one card line is one screen row, so these
-    /// two bound the scroll exactly.
+    /// Where the preview pane sat at the last draw, `None` before the first one.
+    /// One rect answers three questions — how wide to build the card, how many
+    /// rows can show it, and whether the pointer is over it — so they cannot
+    /// disagree. Only the layout knows it, which is why `run` draws before it
+    /// calls `request_preview`.
+    pub preview_area: Option<Rect>,
+    /// Rows the current card occupies. Because the card clips rather than wraps,
+    /// one card line is one screen row, so this and [`App::preview_rows`] bound
+    /// the scroll exactly.
     pub preview_len: u16,
-    pub preview_rows: u16,
     pub show_help: bool,
     /// A newer version the cache knows about; shown, never acted on.
     pub update: Option<String>,
@@ -127,10 +130,9 @@ impl App {
             preview_position,
             preview_pct,
             preview_scroll: 0,
-            // Corrected by the first draw, which always precedes the first request.
-            preview_width: 60,
+            // Filled by the first draw, which always precedes the first request.
+            preview_area: None,
             preview_len: 0,
-            preview_rows: 1,
             show_help: false,
             update,
             show_changelog: false,
@@ -207,11 +209,43 @@ impl App {
         self.show_changelog = true;
     }
 
+    /// Width the card is built to: the preview pane's interior, less its border.
+    /// Before the first draw there is no pane to measure, so guess a common one —
+    /// the next draw publishes the real width and the card is rebuilt to it.
+    fn preview_width(&self) -> u16 {
+        self.preview_area.map_or(60, |a| a.width.saturating_sub(2))
+    }
+
+    /// Rows of card the pane can show at once.
+    pub fn preview_rows(&self) -> u16 {
+        self.preview_area.map_or(1, |a| a.height.saturating_sub(2))
+    }
+
     /// Scroll the preview, stopping at both ends. The list keeps `^j`/`^k`, so
     /// the preview takes the `⌥` pair: the same fingers, the other pane.
     fn scroll_preview(&mut self, delta: i32) {
-        let max = self.preview_len.saturating_sub(self.preview_rows) as i32;
+        let max = self.preview_len.saturating_sub(self.preview_rows()) as i32;
         self.preview_scroll = (self.preview_scroll as i32 + delta).clamp(0, max) as u16;
+    }
+
+    /// A wheel turn moves the pane under the pointer: the card when it is over
+    /// the preview, the selection anywhere else. Reports whether anything moved,
+    /// so the caller can skip a redraw for a wheel over dead space.
+    fn on_wheel(&mut self, at: Position, delta: i32) -> bool {
+        let over_preview =
+            self.preview_enabled && self.preview_area.is_some_and(|a| a.contains(at));
+        if over_preview {
+            let before = self.preview_scroll;
+            // Three rows a notch: the conventional feel for text, and the card
+            // is long enough that one row at a time would be a chore.
+            self.scroll_preview(delta * 3);
+            self.preview_scroll != before
+        } else {
+            // One entry a notch: the list is a menu, and overshooting it costs
+            // a preview render.
+            self.move_sel(delta.signum());
+            true
+        }
     }
 
     fn toggle_preview(&mut self) {
@@ -255,7 +289,7 @@ impl App {
         self.preview_label = entry.primary.clone();
         self.preview_pending =
             self.preview_worker
-                .request(self.preview_seq, entry, self.preview_width);
+                .request(self.preview_seq, entry, self.preview_width());
         self.preview_since = Some(Instant::now());
     }
 
@@ -512,17 +546,64 @@ fn run(
         if !event::poll(Duration::ZERO)? {
             continue; // woke for a finished preview, not a key: redraw it
         }
-        if let Event::Key(k) = event::read()? {
-            if k.kind != KeyEventKind::Press {
-                continue;
+        match event::read()? {
+            Event::Mouse(m) => {
+                let at = Position::new(m.column, m.row);
+                let delta = match m.kind {
+                    MouseEventKind::ScrollDown => 1,
+                    MouseEventKind::ScrollUp => -1,
+                    // A click or a drag: herdr owns those, and this pane has
+                    // nothing to say about them.
+                    _ => continue,
+                };
+                app.on_wheel(at, delta);
             }
-            match handle_key(app, k) {
-                Flow::Continue => {}
-                Flow::Quit => return Ok(None),
-                Flow::Accept(a) => return Ok(Some((app.selected_entry().cloned(), a))),
+            Event::Key(k) => {
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match handle_key(app, k) {
+                    Flow::Continue => {}
+                    Flow::Quit => return Ok(None),
+                    Flow::Accept(a) => return Ok(Some((app.selected_entry().cloned(), a))),
+                }
             }
+            _ => {}
         }
     }
+}
+
+/// Wheel reporting, on and off.
+///
+/// Not crossterm's `EnableMouseCapture`: that also turns on any-event tracking
+/// (`?1003h`), which reports every pointer *move*. The loop would wake and
+/// redraw hundreds of times a second for events it discards. `?1000h` reports
+/// buttons only — the wheel among them — and `?1006h` asks for SGR encoding, so
+/// coordinates past column 223 survive.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1000l";
+
+/// Claim the terminal, then the wheel. Also chains the mouse teardown ahead of
+/// the panic hook `ratatui::init` installs — that hook restores the screen but
+/// knows nothing about the wheel, and a panic must not leave the terminal
+/// reporting clicks at a shell.
+fn init_terminal() -> ratatui::DefaultTerminal {
+    let terminal = ratatui::init();
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        print!("{MOUSE_OFF}");
+        let _ = io::stdout().flush();
+        restore(info);
+    }));
+    print!("{MOUSE_ON}");
+    let _ = io::stdout().flush();
+    terminal
+}
+
+fn restore_terminal() {
+    print!("{MOUSE_OFF}");
+    let _ = io::stdout().flush();
+    ratatui::restore();
 }
 
 fn main() -> Result<()> {
@@ -565,9 +646,9 @@ fn main() -> Result<()> {
     // `root` is not carried into the App: repo entries already hold their absolute
     // `dir`, which is the only thing the preview and the actions ever needed it for.
     let mut app = App::new(entries, theme, cfg, script_dir.clone());
-    let mut terminal = ratatui::init();
+    let mut terminal = init_terminal();
     let outcome = run(&mut terminal, &mut app);
-    ratatui::restore();
+    restore_terminal();
 
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
@@ -653,10 +734,12 @@ mod tests {
         assert_eq!(order, vec![1, 3, 0, 2]);
     }
 
+    /// An app whose preview pane sits at 0,0 and shows `rows` of a `len`-row card.
+    /// The pane is two rows and two columns taller/wider than its interior: the border.
     fn app_with_preview(len: u16, rows: u16) -> App {
         let mut app = App::new(sample(), Theme::default(), Config::default(), ".".into());
+        app.preview_area = Some(Rect::new(0, 0, 40, rows + 2));
         app.preview_len = len;
-        app.preview_rows = rows;
         app
     }
 
@@ -681,6 +764,37 @@ mod tests {
         let mut app = app_with_preview(5, 20);
         app.scroll_preview(3);
         assert_eq!(app.preview_scroll, 0);
+    }
+
+    #[test]
+    fn wheel_over_the_preview_scrolls_the_card() {
+        let mut app = app_with_preview(60, 20);
+        app.on_wheel(Position::new(5, 5), 1);
+        // Three rows a notch.
+        assert_eq!(app.preview_scroll, 3);
+        assert_eq!(app.selected, 0, "the selection must not move with the card");
+    }
+
+    #[test]
+    fn wheel_outside_the_preview_walks_the_list() {
+        let mut app = app_with_preview(60, 20);
+        // The pane is 40 wide; this is past its right edge.
+        app.on_wheel(Position::new(80, 5), 1);
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            app.preview_scroll, 0,
+            "the card must not move with the list"
+        );
+    }
+
+    #[test]
+    fn wheel_over_a_hidden_preview_walks_the_list() {
+        let mut app = app_with_preview(60, 20);
+        // ⌥p hides the pane; its rect is stale, so the pointer being "inside" it
+        // means nothing and the wheel belongs to the list.
+        app.preview_enabled = false;
+        app.on_wheel(Position::new(5, 5), 1);
+        assert_eq!(app.selected, 1);
     }
 
     #[test]

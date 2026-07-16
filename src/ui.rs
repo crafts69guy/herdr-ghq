@@ -63,13 +63,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_input(f, app, root[0], title, accent, sub, overlay);
     draw_list(f, app, list_area, title, accent, text, overlay, surface);
     if let Some(area) = preview_area {
-        // Publish the pane's inner size: the width for the next render request
-        // (the card clips to it, and only the layout knows it), the height for
-        // the scroll clamp. A resize therefore reaches the preview on the next
-        // request, not this frame — the shown card keeps the width it was built
-        // at until the selection moves.
-        app.preview_width = area.width.saturating_sub(2);
-        app.preview_rows = area.height.saturating_sub(2);
+        // Publish where the pane landed: the next render request clips the card
+        // to its width, the scroll clamps to its height, and a wheel turn asks
+        // whether the pointer is inside it. A resize therefore reaches the card
+        // on the next request, not this frame — the shown card keeps the width
+        // it was built at until the selection moves.
+        app.preview_area = Some(area);
         draw_preview(f, app, area, title, overlay);
     }
     draw_footer(f, app, root[2]);
@@ -266,9 +265,9 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Colo
     let mut block = boxed("󰈈 Preview", title, border);
     // Say so only when there is something below the fold, and say where you are
     // — an offset on a card that fits would be noise.
-    if app.preview_scroll > 0 || app.preview_len > app.preview_rows {
+    if app.preview_scroll > 0 || app.preview_len > app.preview_rows() {
         let sub = app.theme.or("subtext0", Color::DarkGray);
-        let last = app.preview_scroll + app.preview_rows.min(app.preview_len);
+        let last = app.preview_scroll + app.preview_rows().min(app.preview_len);
         block = block.title(
             Line::from(Span::styled(
                 format!(" ⌥jk {last}/{} ", app.preview_len),
@@ -469,6 +468,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         row("⌥s", blue, "Cycle sort order"),
         row("⌥p", mauve, "Toggle preview"),
         row("⌥j / ⌥k", teal, "Scroll the preview"),
+        row("wheel", teal, "Scroll whatever is under it"),
         blank(),
         head(" This plugin"),
         row("⌥c", title, "What's new"),
