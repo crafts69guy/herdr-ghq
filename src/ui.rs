@@ -462,6 +462,16 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+/// Width of a cheatsheet key pill, and what a description has left beside it.
+///
+/// The popup is [`HELP_W`] columns at most, split into two halves; the pill and
+/// its two-space gap eat the rest. A longer description is **silently cut** —
+/// the column has no ellipsis to tell you, so `row` asserts instead. This is
+/// how `wheel  Scroll whatever is under it` shipped as `Scroll whatever is`.
+const KEY_PILL: usize = 8;
+const HELP_W: u16 = 64;
+const HELP_DESC: usize = (HELP_W as usize - 2) / 2 - 1 - (KEY_PILL + 1) - 2;
+
 /// A centred, colourful keybindings cheatsheet drawn on top of everything.
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
@@ -473,9 +483,14 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
 
     // A row: a colour-filled key pill followed by its description.
     let row = |key: &str, color: Color, desc: &str| -> Line<'static> {
+        debug_assert!(
+            desc.chars().count() <= HELP_DESC,
+            "help description {desc:?} is {} chars; the column fits {HELP_DESC}",
+            desc.chars().count()
+        );
         Line::from(vec![
             Span::styled(
-                format!(" {key:<8}"),
+                format!(" {key:<KEY_PILL$}"),
                 Style::default()
                     .bg(color)
                     .fg(ink)
@@ -535,8 +550,8 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         row("⌥s", blue, "Cycle sort order"),
         row("⌥p", mauve, "Toggle preview"),
         row("⌥j / ⌥k", teal, "Scroll the preview"),
-        row("wheel", teal, "Scroll whatever is under it"),
-        row("click", teal, "Entry, tab, or a pill below"),
+        row("wheel", teal, "Scroll that pane"),
+        row("click", teal, "Select or run it"),
         blank(),
         head(" This plugin"),
         row("⌥c", title, "What's new"),
@@ -544,7 +559,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     // Centre a comfortably sized popup within the screen.
-    let w = area.width.saturating_sub(6).clamp(40, 64);
+    let w = area.width.saturating_sub(6).clamp(40, HELP_W);
     let want_h = left.len().max(right.len()) as u16 + 4;
     let h = want_h.min(area.height.saturating_sub(2)).max(8);
     let x = area.x + (area.width.saturating_sub(w)) / 2;

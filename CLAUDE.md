@@ -93,14 +93,20 @@ order so the list stays stable.
   changes — and drifts _silently_, into clicking the wrong action. `list_state` is kept
   on the `App` for the same reason: its scroll offset is the only thing that turns a
   clicked row back into an entry, so it cannot be a fresh `ListState` per frame.
-- **The wheel is turned on by hand, and must be turned off on every exit path.** `main.rs`
+- **The cheatsheet's descriptions must fit `HELP_DESC`** (`src/ui.rs`) — the popup's half
+  width less the key pill, around 19 columns. A longer one is cut with no ellipsis, so it
+  ships looking like a shorter phrase; `wheel  Scroll whatever is under it` reached a
+  README screenshot as `Scroll whatever is`. `row` asserts, and a `TestBackend` render
+  test in `main.rs` fires it.
+- **The mouse is turned on by hand, and must be turned off on every exit path.** `main.rs`
   writes `?1000h`/`?1006h` itself rather than using crossterm's `EnableMouseCapture`, which
   also enables any-event tracking (`?1003h`) — every pointer move would wake the loop into
-  a redraw for an event we discard. `init_terminal`/`restore_terminal` pair it, and
+  a redraw for an event we discard. `?1000h` reports the wheel *and* buttons, which is
+  exactly what the picker consumes; drags stay herdr's, which runs with
+  `mouse_capture = true`. `init_terminal`/`restore_terminal` pair the escapes, and
   `init_terminal` chains the disable ahead of the panic hook `ratatui::init` installs,
-  since that hook restores the screen but knows nothing about the wheel. Leaving it on
-  drops mouse escapes into the user's shell. The picker only claims the wheel: clicks and
-  drags stay herdr's, which runs with `mouse_capture = true`.
+  since that hook restores the screen but knows nothing about the mouse. Leaving it on
+  drops mouse escapes into the user's shell.
 - **The preview clips; it must never wrap.** Every body goes through `clip`/`clip_line`
   (`src/preview.rs`) so one card line is exactly one screen row — that is what makes
   `preview_scroll` mean what it says and `preview_len`/`preview_rows` bound it correctly.

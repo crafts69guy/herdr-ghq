@@ -886,6 +886,60 @@ mod tests {
         matches!(flow, Flow::Accept(_))
     }
 
+    /// Render the whole UI into a buffer and hand back what it says, row by row.
+    fn rendered(app: &mut App, w: u16, h: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| ui::draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_help_popup_says_what_each_key_does_in_full() {
+        let mut app = app_with_layout();
+        app.show_help = true;
+        // A description too wide for the column is cut with no ellipsis to warn
+        // anyone — `wheel  Scroll whatever is under it` reached a screenshot as
+        // `Scroll whatever is`. `row`'s debug_assert fires here if it recurs.
+        let screen = rendered(&mut app, 120, 40);
+        assert!(screen.contains("Scroll that pane"), "{screen}");
+        assert!(screen.contains("Select or run it"), "{screen}");
+    }
+
+    #[test]
+    fn the_command_bar_pills_are_where_their_zones_say() {
+        let mut app = app_with_layout();
+        let screen = rendered(&mut app, 120, 40);
+        let bar = screen.lines().last().unwrap().to_string();
+        // The zones the draw published must land on the pills the draw drew.
+        for &(a, b, _) in &app.footer_zones {
+            let pill: String = bar
+                .chars()
+                .skip(a as usize)
+                .take((b - a) as usize)
+                .collect();
+            assert!(
+                !pill.trim().is_empty(),
+                "zone {a}..{b} covers blank bar: {bar:?}"
+            );
+        }
+        let (a, b, _) = app.footer_zones[0];
+        let first: String = bar
+            .chars()
+            .skip(a as usize)
+            .take((b - a) as usize)
+            .collect();
+        assert_eq!(first.trim(), "↵ open");
+    }
+
     #[test]
     fn clicking_a_row_selects_that_entry() {
         let mut app = app_with_layout();
