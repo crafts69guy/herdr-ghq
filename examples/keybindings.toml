@@ -1,0 +1,31 @@
+# herdr accepts one key after the prefix (chords like "prefix+p+t" are
+# invalid), so the recommended setup is a single key for the picker, which
+# fans out to every open target via the popup's ctrl-keys.
+#
+# Add this to ~/.config/herdr/config.toml, then `herdr server reload-config`.
+
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+command = "ghq.menu"
+description = "Project switcher (ghq)"
+
+# Optional: a dedicated clone key.
+# [[keys.command]]
+# key = "prefix+alt+p"
+# type = "plugin_action"
+# command = "ghq.get"
+# description = "Clone a repository (ghq get)"
+
+# Optional hot-path bindings — pick a repo with Enter forced to one target:
+# [[keys.command]]
+# key = "prefix+alt+t"
+# type = "plugin_action"
+# command = "ghq.open-tab"
+# description = "Open a repo in a new tab"
+
+# [[keys.command]]
+# key = "prefix+alt+s"
+# type = "plugin_action"
+# command = "ghq.open-split"
+# description = "Open a repo in a split"
