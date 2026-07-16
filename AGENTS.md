@@ -15,8 +15,11 @@ Do not commit generated `target/` artifacts.
 - `cargo build` compiles a debug binary for quick iteration.
 - `cargo build --release` produces the binary launched by `bin/picker.sh`.
 - `cargo test` runs Rust unit tests, including filtering and history behavior.
-- `bash tests/manifest_spec.sh` validates plugin actions, pane paths, and Bash
-  syntax from a foreign working directory.
+- `bash tests/manifest_spec.sh` validates plugin actions, pane paths, version sync
+  between `Cargo.toml` and `herdr-plugin.toml`, and Bash syntax from a foreign
+  working directory.
+- `bash bin/release.sh <version>` cuts a release. It needs a terminal for its
+  confirmation prompt, so an agent cannot run it — ask the maintainer to.
 - `cargo fmt --check` verifies Rust formatting.
 - `cargo clippy --all-targets -- -D warnings` treats lint findings as failures.
 - `herdr plugin link /path/to/herdr-ghq` installs the checkout for manual testing;
@@ -41,11 +44,22 @@ herdr CLI changes; attach a screenshot when visual output changes.
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use short, imperative summaries, often ending with a release tag
-such as `(v0.4.0)`. Keep each commit focused. Pull requests should explain user
-impact, list verification performed, link related issues, and call out required
-herdr/ghq versions. For releases, keep versions in `Cargo.toml` and
-`herdr-plugin.toml` synchronized.
+Commits use short, imperative summaries; keep each one focused. Pull requests should
+explain user impact, list verification performed, link related issues, and call out
+required herdr/ghq versions.
+
+Any change a user would notice adds a line to the `## [Unreleased]` section of
+`CHANGELOG.md` **in the same commit** — describe the change in the user's terms
+(`alt-p toggles the preview`), not the code's (`refactor preview module`). Purely
+internal work (formatting, refactors, contributor docs) adds nothing. Nothing is
+generated from `git log`, so an entry that is not written here is lost: `bin/release.sh`
+promotes `[Unreleased]` verbatim into the GitHub release notes, and aborts if it is
+empty.
+
+Releases go through `bin/release.sh`, which bumps `Cargo.toml` and `herdr-plugin.toml`
+together, dates the changelog section, and tags. Do not bump versions by hand; older
+commits ended their summary with a release tag such as `(v0.4.0)`, but the script now
+makes a dedicated `Release vX.Y.Z` commit instead.
 
 ## Safety & Configuration
 
