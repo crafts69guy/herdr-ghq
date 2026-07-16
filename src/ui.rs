@@ -74,7 +74,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-pub fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
+fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

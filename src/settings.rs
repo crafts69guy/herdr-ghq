@@ -2,9 +2,13 @@
 //! `config.toml`.
 //!
 //! This was an fzf list, which made a fixed 16-row form behave like a search: a fuzzy
-//! prompt, a `16/16` match counter, and a border label doubling herdr's own pane title.
-//! You do not *find* `sort` in this list, you walk to it — so it is a form now, drawn
-//! with the same boxes, colours, and command-bar pills as the picker.
+//! prompt and a `16/16` match counter. You do not *find* `sort` in this list, you walk
+//! to it — so it is a form now, in the picker's colours and command-bar pills.
+//!
+//! It draws no border of its own. This runs in a popup pane, which herdr already frames
+//! and titles from the manifest; a second box would double the title and cost two rows
+//! and two columns of a window sized to fit exactly. The picker can afford its boxes
+//! because its overlay title is minimised to an icon.
 //!
 //! Values are written the moment they change, as the fzf version did: the picker reads
 //! `config.toml` at startup, so no server reload is involved.
@@ -22,7 +26,6 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::data::{Config, Theme};
-use crate::ui;
 
 /// How Enter changes a setting.
 enum Cycle {
@@ -289,23 +292,17 @@ fn handle_key(app: &mut App, k: event::KeyEvent) -> Flow {
 
 fn draw(f: &mut Frame, app: &App) {
     let t = &app.theme;
-    let border = t.or("overlay0", Color::DarkGray);
     let text = t.or("text", Color::Reset);
     let sub = t.or("subtext0", Color::Gray);
     let accent = t.or("accent", Color::Cyan);
     let surface = t.or("surface1", Color::DarkGray);
 
+    // No box of our own: a popup pane already has herdr's frame and its manifest title.
+    // Drawing a second bordered box inside it doubles the title and spends two rows and
+    // two columns we do not have — the picker gets away with its boxes only because its
+    // overlay title is minimised to an icon.
     let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
-    let block = ui::boxed(" 󰒓 Ghq Settings ", app.title_color, border);
-    let inner = block.inner(rows[0]);
-    f.render_widget(block, rows[0]);
-
-    let area = Rect {
-        x: inner.x + 1,
-        y: inner.y,
-        width: inner.width.saturating_sub(2),
-        height: inner.height,
-    };
+    let area = rows[0];
 
     // herdr clamps the popup to the terminal, so a short window must scroll rather than
     // silently drop the last settings — the exact trap the fzf version fell into. The
