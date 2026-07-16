@@ -3,11 +3,27 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$ROOT/herdr-plugin.toml"
+CARGO_TOML="$ROOT/Cargo.toml"
 
 fail() {
   printf 'manifest_spec: %s\n' "$*" >&2
   exit 1
 }
+
+# First `version = "..."` in a file, from its leading key block.
+toml_version() {
+  sed -n 's/^version = "\(.*\)"$/\1/p' "$1" | head -n 1
+}
+
+# herdr reads herdr-plugin.toml; cargo reads Cargo.toml. A release that bumps one
+# and not the other ships a binary whose version disagrees with the manifest.
+manifest_version="$(toml_version "$MANIFEST")"
+cargo_version="$(toml_version "$CARGO_TOML")"
+
+[ -n "$manifest_version" ] || fail "herdr-plugin.toml declares no version"
+[ -n "$cargo_version" ] || fail "Cargo.toml declares no version"
+[ "$manifest_version" = "$cargo_version" ] ||
+  fail "version mismatch: herdr-plugin.toml $manifest_version, Cargo.toml $cargo_version"
 
 # Every pane entrypoint must launch through HERDR_PLUGIN_ROOT so herdr can start
 # it from the originating repo, not the plugin checkout.

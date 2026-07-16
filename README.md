@@ -128,6 +128,18 @@ from herdr, never a guessed one. Clone/settings stay as bash (`bin/get.sh`,
 `bin/settings.sh`). Removal (`ctrl-x`) is the only destructive path and always requires
 typing the repo name to confirm.
 
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md). Releases are tagged `vX.Y.Z`; to update an installed
+copy, re-run the install command — it re-fetches the ref:
+
+```sh
+herdr plugin install crafts69guy/herdr-ghq
+herdr server reload-config
+```
+
+Watch the repository (Watch → Custom → Releases) to hear about new versions.
+
 ## License
 
 MIT — see `LICENSE`.

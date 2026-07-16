@@ -18,7 +18,8 @@ cargo test                                   # unit tests (sorting, group filter
 cargo test recent_sort_puts_latest_opened_first   # single test by name
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings    # warnings are failures
-bash tests/manifest_spec.sh                  # manifest/entrypoint contract + bash syntax check
+bash tests/manifest_spec.sh                  # manifest/entrypoint contract, version sync, bash syntax
+bash bin/release.sh 0.5.0                    # cut a release (gates, bump, changelog, tag, gh release)
 
 herdr plugin link /path/to/herdr-ghq         # install this checkout for manual testing
 herdr server reload-config                   # after touching keybindings/config
@@ -80,7 +81,13 @@ order so the list stays stable.
   `dispatch`. Enter on an **agent** or **workspace** still focuses that entry — forcing a target
   only changes where a *repo* lands, matching the manifest's "Pick a repo; Enter opens it in…".
   Invalid values on either the env var or the config degrade to `workspace` instead of erroring.
-- **Version sync:** `Cargo.toml` and `herdr-plugin.toml` versions must match on release.
+- **Version sync:** `Cargo.toml` and `herdr-plugin.toml` versions must match; `tests/manifest_spec.sh`
+  enforces it. `bin/release.sh` bumps both, so bump through it rather than by hand.
+- **The changelog is the release notes.** Every user-facing change adds a line to
+  `CHANGELOG.md`'s `[Unreleased]` section *in the same commit*; `bin/release.sh` promotes that
+  section to a dated one and feeds it verbatim to `gh release create`. Commits are not
+  Conventional Commits and nothing is generated from `git log` — an empty `[Unreleased]` aborts
+  the release.
 - **`ctrl-x` (remove) is the only destructive path.** It requires typing the repo name to confirm.
   Preserve that; test against disposable repos.
 - **Pane commands must launch through `$HERDR_PLUGIN_ROOT`** — `tests/manifest_spec.sh` asserts the
