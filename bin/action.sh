@@ -30,7 +30,16 @@ fi
 pane_id="$(context_pane_id)"
 cwd=""
 
-command=("$(herdr_bin)" plugin pane open --plugin ghq --entrypoint "$entrypoint" --placement overlay)
+# The settings dashboard is a fixed-size form, so it opens as a session-modal popup
+# sized to its content: 16 rows plus fzf's header and border, and a widest line of
+# `%-22s %-12s` plus a 45-column hint. Cells rather than a percentage — the form does
+# not get more readable on a 200-column monitor. The picker stays a full overlay.
+placement=(--placement overlay)
+case "$entrypoint" in
+  settings) placement=(--placement popup --width 96 --height 26) ;;
+esac
+
+command=("$(herdr_bin)" plugin pane open --plugin ghq --entrypoint "$entrypoint" "${placement[@]}")
 if cwd="$(active_cwd "$pane_id")"; then
   command+=(--cwd "$cwd" --env "GHQ_ORIGIN_CWD=$cwd")
 fi

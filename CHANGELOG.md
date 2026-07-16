@@ -7,6 +7,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The settings dashboard now opens as a session-modal popup sized to its content
+  (96×26) instead of a full-screen overlay, so it reads as the small form it is and
+  leaves the workspace visible behind it. Needs herdr ≥ 0.7.4, which is already the
+  declared minimum.
+
 ## [0.5.0] - 2026-07-16
 
 ### Changed

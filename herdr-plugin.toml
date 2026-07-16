@@ -64,5 +64,7 @@ command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/get.sh\""]
 [[panes]]
 id = "settings"
 title = "Ghq Settings"
-placement = "overlay"
+placement = "popup"
+width = 96
+height = 26
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]
