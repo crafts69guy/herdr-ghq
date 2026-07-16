@@ -99,7 +99,9 @@ herdr server reload-config
 ```
 
 Press `prefix+space` to open the picker. `ghq.get` opens the clone flow directly,
-`ghq.settings` opens the settings dashboard, and `ghq.changelog` shows what changed.
+`ghq.settings` opens the settings dashboard, `ghq.changelog` shows what changed, and
+`ghq.update-plugin` installs a newer version (it refuses to touch a `link`ed checkout —
+pull that yourself).
 
 ## Configuration
 

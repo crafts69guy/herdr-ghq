@@ -20,6 +20,7 @@ cargo test recent_sort_puts_latest_opened_first   # single test by name
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings    # warnings are failures
 bash tests/manifest_spec.sh                  # manifest/entrypoint contract, version sync, bash syntax
+bash tests/update_guard_spec.sh              # the update guard, with herdr stubbed via HERDR_BIN_PATH
 bash bin/release.sh 0.5.0                    # cut a release (gates, bump, changelog, tag, gh release)
 
 herdr plugin link /path/to/herdr-ghq         # install this checkout for manual testing
@@ -104,6 +105,15 @@ order so the list stays stable.
   a thread: the picker frequently exits in under a second and the fetch takes several, so the
   cache would never be written. `git ls-remote` over the GitHub API on purpose — no `jq`, no
   60/hour unauthenticated rate limit, no auth. Everything fails silently.
+- **The update flow fails closed.** `bin/update-plugin.sh` installs only when herdr reports
+  an unambiguous `"source":{"kind":"github"…}`; local links, unreadable output, and shapes it
+  does not recognise all refuse. The failure it must never make is the permissive one —
+  `herdr plugin install` would overwrite a contributor's working tree. `tests/update_guard_spec.sh`
+  stubs `herdr` through `HERDR_BIN_PATH` and asserts every case. Never widen the guard without
+  extending that spec, and never name a real mutating command inside backticks in it.
+- **An update must force a rebuild.** `target/` is gitignored, so re-fetching the source leaves
+  the old binary in place and `bin/picker.sh` only builds when the binary is *missing* — the new
+  code would ship with the old switcher still running. `update-plugin.sh` removes it and rebuilds.
 - **`ctrl-x` (remove) is the only destructive path.** It requires typing the repo name to confirm.
   Preserve that; test against disposable repos.
 - **Pane commands must launch through `$HERDR_PLUGIN_ROOT`** — `tests/manifest_spec.sh` asserts the

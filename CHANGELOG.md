@@ -9,6 +9,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An **update action**: `ghq.update-plugin` installs the newest tagged version and
+  rebuilds the switcher. It refuses to run against anything but an unambiguous GitHub
+  install — a linked development checkout is left alone, with the manual steps printed
+  instead, since installing over one would overwrite a working tree.
 - An **update check**: once a day, the plugin asks GitHub whether a newer version is
   tagged and shows `↑ v0.6.0` at the end of the command bar. It never installs anything,
   and it yields to the keys rather than overdrawing them, so it goes unsaid on a narrow

@@ -20,6 +20,7 @@ case "$ACTION_ID" in
   get) entrypoint="get" ;;
   settings) entrypoint="settings" ;;
   changelog) entrypoint="changelog" ;;
+  update-plugin) entrypoint="update-plugin" ;;
   *) die "Ghq received an unsupported action. Check plugin logs." "unknown plugin action '$ACTION_ID'" ;;
 esac
 

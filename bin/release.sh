@@ -69,6 +69,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 bash tests/manifest_spec.sh
+bash tests/update_guard_spec.sh
 
 # --- bump --------------------------------------------------------------------
 

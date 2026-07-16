@@ -27,6 +27,13 @@ contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
 [[actions]]
+id = "update-plugin"
+title = "Update Ghq"
+description = "Install the newest tagged version of this plugin. Refuses to touch a linked checkout."
+contexts = ["global", "pane"]
+command = ["bash", "bin/action.sh"]
+
+[[actions]]
 id = "changelog"
 title = "Ghq Changelog"
 description = "Read what changed in this plugin, including the version you have installed."
@@ -75,6 +82,12 @@ placement = "popup"
 width = 88
 height = 20
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]
+
+[[panes]]
+id = "update-plugin"
+title = "Update Ghq"
+placement = "overlay"
+command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/update-plugin.sh\""]
 
 [[panes]]
 id = "changelog"

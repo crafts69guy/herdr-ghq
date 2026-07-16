@@ -19,6 +19,9 @@ Do not commit generated `target/` artifacts.
 - `bash tests/manifest_spec.sh` validates plugin actions, pane paths, version sync
   between `Cargo.toml` and `herdr-plugin.toml`, and Bash syntax from a foreign
   working directory.
+- `bash tests/update_guard_spec.sh` checks that the update flow refuses to install
+  over anything but an unambiguous GitHub install; it stubs `herdr` via
+  `HERDR_BIN_PATH` and never touches the real one.
 - `bash bin/release.sh <version>` cuts a release. It needs a terminal for its
   confirmation prompt, so an agent cannot run it — ask the maintainer to.
 - `cargo fmt --check` verifies Rust formatting.
