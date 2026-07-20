@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-20
+
 ### Added
 
 - **A Telescope/LazyVim keymap: modal, remappable, and self-documenting.** The picker
@@ -295,7 +297,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open it in a new workspace, tab, split, or the current pane, plus clone (`ghq get`),
   update, remove, and a handoff to the git-hub menu.
 
-[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.3.4...v0.4.0
