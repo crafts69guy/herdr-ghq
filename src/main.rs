@@ -7,6 +7,7 @@ mod data;
 mod history;
 mod markdown;
 mod preview;
+mod runner;
 mod settings;
 mod state;
 mod tui;
@@ -722,9 +723,10 @@ fn main() -> Result<()> {
         _ => {}
     }
 
+    let runner = runner::SystemRunner;
     let cfg = Config::load();
     let theme = Theme::load();
-    let root = data::ghq_root();
+    let root = data::ghq_root(&runner);
     let script_dir = env::var("HERDR_PLUGIN_ROOT")
         .map(|r| format!("{r}/bin"))
         .unwrap_or_else(|_| ".".into());
@@ -739,7 +741,7 @@ fn main() -> Result<()> {
     // enables shows up on a later launch. Nothing below waits on it.
     update::spawn_refresh_if_stale(&cfg);
 
-    let entries = data::load(&cfg, &theme, &root);
+    let entries = data::load(&runner, &cfg, &theme, &root);
     if entries.is_empty() {
         // Nothing to switch to yet — hand off to the clone flow.
         let err = Command::new("bash")
@@ -758,6 +760,7 @@ fn main() -> Result<()> {
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
         action::dispatch(
+            &runner,
             entry,
             accept,
             &origin,

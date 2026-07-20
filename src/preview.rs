@@ -16,7 +16,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -26,6 +25,7 @@ use ratatui::text::{Line, Span, Text};
 use serde_json::Value;
 
 use crate::data::{state_color, Config, Entry, Kind, Theme};
+use crate::runner::{CommandRunner, SystemRunner};
 
 /// A render request. `seq` lets the UI drop results it has already scrolled
 /// past; `width` is the pane's inner width at the last draw, so bodies can be
@@ -53,13 +53,17 @@ impl Worker {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (done_tx, done_rx) = mpsc::channel::<Done>();
         thread::spawn(move || {
+            // The live worker always drives the real programs; the runner seam
+            // exists so `render` can be unit-tested with a mock, not so this
+            // thread can be reconfigured.
+            let runner = SystemRunner;
             while let Ok(mut job) = job_rx.recv() {
                 // Skip ahead to the newest request: while the user scrolls, only
                 // the entry they land on is worth the subprocess.
                 while let Ok(newer) = job_rx.try_recv() {
                     job = newer;
                 }
-                let text = render(&job.entry, &script_dir, &cfg, &theme, job.width);
+                let text = render(&job.entry, &runner, &script_dir, &cfg, &theme, job.width);
                 if done_tx.send(Done { seq: job.seq, text }).is_err() {
                     break; // the UI is gone
                 }
@@ -84,6 +88,7 @@ impl Worker {
 
 pub fn render(
     entry: &Entry,
+    runner: &dyn CommandRunner,
     script_dir: &str,
     cfg: &Config,
     theme: &Theme,
@@ -94,9 +99,9 @@ pub fn render(
     // rule arithmetic below out of saturating-to-zero territory.
     let width = width.max(24);
     let lines = match entry.kind {
-        Kind::Agent => agent_card(entry, width, &p, theme),
-        Kind::Workspace => workspace_card(entry, width, &p, theme),
-        Kind::Repo => repo_card(entry, script_dir, cfg, width, &p, theme),
+        Kind::Agent => agent_card(entry, runner, width, &p, theme),
+        Kind::Workspace => workspace_card(entry, runner, width, &p, theme),
+        Kind::Repo => repo_card(entry, runner, script_dir, cfg, width, &p, theme),
     };
     Text::from(lines)
 }
@@ -257,8 +262,8 @@ fn tilde(path: &str) -> String {
 /// missing, a non-zero exit, unparseable output — becomes `Value::Null`, which
 /// the readers below see as "field absent" and fall back on. A preview must
 /// never be the thing that fails loudly.
-fn herdr_json(args: &[&str]) -> Value {
-    let Ok(out) = Command::new("herdr").args(args).output() else {
+fn herdr_json(runner: &dyn CommandRunner, args: &[&str]) -> Value {
+    let Ok(out) = runner.output("herdr", args) else {
         return Value::Null;
     };
     if !out.status.success() {
@@ -269,8 +274,14 @@ fn herdr_json(args: &[&str]) -> Value {
 
 // --- agent -----------------------------------------------------------------
 
-fn agent_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'static>> {
-    let v = herdr_json(&["agent", "get", &entry.id]);
+fn agent_card(
+    entry: &Entry,
+    runner: &dyn CommandRunner,
+    width: u16,
+    p: &Ink,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let v = herdr_json(runner, &["agent", "get", &entry.id]);
     let a = &v["result"]["agent"];
     let name = a["agent"].as_str().unwrap_or("agent");
     let status = a["agent_status"].as_str().unwrap_or("unknown");
@@ -301,7 +312,7 @@ fn agent_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'st
     lines.push(Line::raw(""));
     lines.push(rule("recent output", width, p));
     lines.push(Line::raw(""));
-    lines.extend(agent_output(&entry.id, width, p));
+    lines.extend(agent_output(runner, &entry.id, width, p));
     lines
 }
 
@@ -312,10 +323,13 @@ fn agent_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'st
 /// The rows arrive at the *agent's* pane width, far wider than this preview, so
 /// each is clipped rather than wrapped — wrapping is what turned this body into
 /// a wall of fragments.
-fn agent_output(id: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
-    let v = herdr_json(&[
-        "agent", "read", id, "--source", "recent", "--format", "ansi", "--lines", "60",
-    ]);
+fn agent_output(runner: &dyn CommandRunner, id: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
+    let v = herdr_json(
+        runner,
+        &[
+            "agent", "read", id, "--source", "recent", "--format", "ansi", "--lines", "60",
+        ],
+    );
     let Some(text) = v["result"]["read"]["text"].as_str() else {
         return vec![note("(no output available)", p)];
     };
@@ -355,8 +369,14 @@ fn agent_output(id: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
 
 // --- workspace -------------------------------------------------------------
 
-fn workspace_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'static>> {
-    let v = herdr_json(&["workspace", "get", &entry.id]);
+fn workspace_card(
+    entry: &Entry,
+    runner: &dyn CommandRunner,
+    width: u16,
+    p: &Ink,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let v = herdr_json(runner, &["workspace", "get", &entry.id]);
     let w = &v["result"]["workspace"];
     let label = w["label"].as_str().unwrap_or(&entry.label);
     let status = w["agent_status"].as_str().unwrap_or("unknown");
@@ -382,6 +402,7 @@ fn workspace_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line
     lines.push(rule("tabs", width, p));
     lines.push(Line::raw(""));
     lines.extend(workspace_tabs(
+        runner,
         &entry.id,
         w["active_tab_id"].as_str().unwrap_or(""),
         width,
@@ -395,13 +416,14 @@ fn workspace_card(entry: &Entry, width: u16, p: &Ink, theme: &Theme) -> Vec<Line
 /// rows come from `tab list` — which returns every tab in the session — narrowed
 /// by workspace id.
 fn workspace_tabs(
+    runner: &dyn CommandRunner,
     wid: &str,
     active: &str,
     width: u16,
     p: &Ink,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let v = herdr_json(&["tab", "list"]);
+    let v = herdr_json(runner, &["tab", "list"]);
     let Some(tabs) = v["result"]["tabs"].as_array() else {
         return vec![note("(tabs unavailable)", p)];
     };
@@ -442,6 +464,7 @@ fn workspace_tabs(
 
 fn repo_card(
     entry: &Entry,
+    runner: &dyn CommandRunner,
     script_dir: &str,
     cfg: &Config,
     width: u16,
@@ -468,11 +491,11 @@ fn repo_card(
     }
 
     // Detached HEAD has no symbolic ref; fall back to the short sha.
-    let branch = git(dir, &["symbolic-ref", "--short", "HEAD"])
+    let branch = git(runner, dir, &["symbolic-ref", "--short", "HEAD"])
         .filter(|s| !s.is_empty())
-        .or_else(|| git(dir, &["rev-parse", "--short", "HEAD"]).filter(|s| !s.is_empty()))
+        .or_else(|| git(runner, dir, &["rev-parse", "--short", "HEAD"]).filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "—".into());
-    let dirty = git(dir, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    let dirty = git(runner, dir, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
     let (state, state_c) = if dirty {
         ("dirty", theme.or("yellow", Color::Yellow))
     } else {
@@ -491,13 +514,15 @@ fn repo_card(
         meta("branch", &branch, width, p),
     ];
     // A repo with no commits yet has no last commit; the row simply goes unsaid.
-    if let Some(last) = git(dir, &["log", "-1", "--format=%cr · %s"]).filter(|s| !s.is_empty()) {
+    if let Some(last) =
+        git(runner, dir, &["log", "-1", "--format=%cr · %s"]).filter(|s| !s.is_empty())
+    {
         lines.push(meta("last", &last, width, p));
     }
     lines.push(meta("path", &tilde(dir), width, p));
     lines.push(Line::raw(""));
     lines.push(rule("files", width, p));
-    lines.extend(tree(dir, script_dir, width));
+    lines.extend(tree(runner, dir, script_dir, width));
 
     if cfg.bool("preview_readme", true) {
         if let Some((name, body)) = readme(dir) {
@@ -564,27 +589,18 @@ fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
 /// Trimmed stdout of a `git -C dir` call, or None when git fails. Success with
 /// empty output stays `Some("")` — for `status --porcelain` the emptiness *is*
 /// the answer — so callers that want a value filter for it themselves.
-fn git(dir: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+fn git(runner: &dyn CommandRunner, dir: &str, args: &[&str]) -> Option<String> {
+    let mut full = vec!["-C", dir];
+    full.extend_from_slice(args);
+    runner.capture("git", &full)
 }
 
 /// The file tree, still from `preview.sh`: it is the one part of the card that
 /// is already ANSI (eza's colours and icons), so it passes through rather than
 /// being re-styled here.
-fn tree(dir: &str, script_dir: &str, width: u16) -> Vec<Line<'static>> {
-    let Ok(out) = Command::new("bash")
-        .arg(format!("{script_dir}/preview.sh"))
-        .arg(dir)
-        .output()
-    else {
+fn tree(runner: &dyn CommandRunner, dir: &str, script_dir: &str, width: u16) -> Vec<Line<'static>> {
+    let script = format!("{script_dir}/preview.sh");
+    let Ok(out) = runner.output("bash", &[&script, dir]) else {
         return Vec::new();
     };
     let lines = out.stdout.into_text().map(|t| t.lines).unwrap_or_else(|_| {
@@ -616,6 +632,116 @@ fn readme(dir: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::MockRunner;
+
+    /// The visible text of a card, spans joined, for `contains` assertions.
+    fn flat(lines: &[Line]) -> String {
+        lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<&str>>()
+            .join(" ")
+    }
+
+    fn ink() -> Ink {
+        Ink::new(&Theme::default(), &Config::default())
+    }
+
+    #[test]
+    fn agent_card_reads_herdr_json_into_name_status_doing_and_output() {
+        let get = r#"{"result":{"agent":{"agent":"claude","agent_status":"working","foreground_cwd":"/tmp/x","terminal_title_stripped":"building the thing","pane_id":"p1"}}}"#;
+        let read = r#"{"result":{"read":{"text":"compiling module\n"}}}"#;
+        let runner = MockRunner::new()
+            .on("agent get", get)
+            .on("agent read", read);
+        let entry = Entry {
+            kind: Kind::Agent,
+            id: "term-1".into(),
+            dir: Some("/tmp/x".into()),
+            label: "x".into(),
+            icon: "●".into(),
+            icon_color: Color::Reset,
+            primary: String::new(),
+            secondary: String::new(),
+            search: String::new(),
+        };
+        let out = flat(&agent_card(&entry, &runner, 60, &ink(), &Theme::default()));
+        assert!(out.contains("claude"), "{out}");
+        assert!(out.contains("working"), "{out}");
+        assert!(out.contains("building the thing"), "{out}");
+        assert!(out.contains("compiling module"), "{out}");
+    }
+
+    #[test]
+    fn workspace_card_lists_only_its_own_tabs() {
+        let get = r#"{"result":{"workspace":{"label":"work","agent_status":"idle","number":2,"pane_count":3,"focused":true,"active_tab_id":"tab-1"}}}"#;
+        let tabs = r#"{"result":{"tabs":[
+            {"tab_id":"tab-1","workspace_id":"ws-1","label":"editor","agent_status":"idle","pane_count":2},
+            {"tab_id":"tab-9","workspace_id":"ws-OTHER","label":"elsewhere","agent_status":"idle","pane_count":1}
+        ]}}"#;
+        let runner = MockRunner::new()
+            .on("workspace get", get)
+            .on("tab list", tabs);
+        let entry = Entry {
+            kind: Kind::Workspace,
+            id: "ws-1".into(),
+            dir: None,
+            label: "work".into(),
+            icon: "".into(),
+            icon_color: Color::Reset,
+            primary: String::new(),
+            secondary: String::new(),
+            search: String::new(),
+        };
+        let out = flat(&workspace_card(
+            &entry,
+            &runner,
+            60,
+            &ink(),
+            &Theme::default(),
+        ));
+        assert!(out.contains("editor"), "{out}");
+        assert!(
+            !out.contains("elsewhere"),
+            "a tab from another workspace leaked in: {out}"
+        );
+    }
+
+    #[test]
+    fn repo_card_reads_git_state_into_the_header_and_meta() {
+        let dir = std::env::temp_dir().join(format!("ghq-prev-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+        let runner = MockRunner::new()
+            .on("symbolic-ref", "feature/x")
+            .on("status --porcelain", "") // clean
+            .on("log -1", "2 days ago · initial commit");
+        let entry = Entry {
+            kind: Kind::Repo,
+            id: "o/r".into(),
+            dir: Some(path),
+            label: "r".into(),
+            icon: "".into(),
+            icon_color: Color::Reset,
+            primary: String::new(),
+            secondary: String::new(),
+            search: String::new(),
+        };
+        let out = flat(&repo_card(
+            &entry,
+            &runner,
+            ".",
+            &Config::default(),
+            60,
+            &ink(),
+            &Theme::default(),
+        ));
+        assert!(out.contains("feature/x"), "{out}");
+        assert!(out.contains("clean"), "{out}");
+        assert!(out.contains("initial commit"), "{out}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn clip_leaves_short_text_alone() {

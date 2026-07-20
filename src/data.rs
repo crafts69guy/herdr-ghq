@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use ratatui::style::Color;
+
+use crate::runner::CommandRunner;
 
 // --- theme -----------------------------------------------------------------
 
@@ -226,18 +227,8 @@ pub struct Entry {
     pub search: String,
 }
 
-pub fn ghq_root() -> String {
-    run(&["ghq", "root"]).unwrap_or_default().trim().to_string()
-}
-
-/// Run a command and capture trimmed stdout, or None on failure.
-fn run(args: &[&str]) -> Option<String> {
-    let out = Command::new(args[0]).args(&args[1..]).output().ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        None
-    }
+pub fn ghq_root(runner: &dyn CommandRunner) -> String {
+    runner.capture("ghq", &["root"]).unwrap_or_default()
 }
 
 /// Status → colour, shared with the preview card so an agent's pill there is the
@@ -251,11 +242,11 @@ pub fn state_color(theme: &Theme, status: &str) -> Color {
     }
 }
 
-pub fn load(cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
+pub fn load(runner: &dyn CommandRunner, cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
     let mut entries = Vec::new();
 
     if cfg.bool("include_agents", true) {
-        if let Some(json) = run(&["herdr", "agent", "list"]) {
+        if let Some(json) = runner.capture("herdr", &["agent", "list"]) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(arr) = v["result"]["agents"].as_array() {
                     for a in arr {
@@ -293,7 +284,7 @@ pub fn load(cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
     }
 
     if cfg.bool("include_workspaces", true) {
-        if let Some(json) = run(&["herdr", "workspace", "list"]) {
+        if let Some(json) = runner.capture("herdr", &["workspace", "list"]) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(arr) = v["result"]["workspaces"].as_array() {
                     for w in arr {
@@ -326,7 +317,7 @@ pub fn load(cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
         }
     }
 
-    if let Some(list) = run(&["ghq", "list"]) {
+    if let Some(list) = runner.capture("ghq", &["list"]) {
         for rel in list.lines().filter(|l| !l.is_empty()) {
             let (host, rest) = rel.split_once('/').unwrap_or(("", rel));
             let (icon, color) = host_icon(host, theme);
@@ -359,4 +350,92 @@ fn host_icon(host: &str, theme: &Theme) -> (&'static str, Color) {
 
 fn basename(p: &str) -> String {
     p.rsplit('/').next().unwrap_or(p).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runner::MockRunner;
+
+    const AGENTS: &str = r#"{"result":{"agents":[
+        {"terminal_id":"term-1","agent":"claude","agent_status":"working","foreground_cwd":"/home/u/proj"},
+        {"terminal_id":"","agent":"ghost","agent_status":"idle"},
+        {"terminal_id":"term-2","agent":"","agent_status":"idle"}
+    ]}}"#;
+    const WORKSPACES: &str = r#"{"result":{"workspaces":[
+        {"workspace_id":"ws-1","label":"work","number":2,"pane_count":3,"focused":true}
+    ]}}"#;
+    const REPOS: &str = "github.com/o/repo-a\nbitbucket.org/o/repo-b\n";
+
+    fn seeded() -> MockRunner {
+        MockRunner::new()
+            .on("herdr agent list", AGENTS)
+            .on("herdr workspace list", WORKSPACES)
+            .on("ghq list", REPOS)
+    }
+
+    #[test]
+    fn load_maps_each_source_into_entries_in_order() {
+        let entries = load(&seeded(), &Config::default(), &Theme::default(), "/root");
+        // One valid agent (the id-less and label-less ones are dropped), one
+        // workspace, then the two repos — agents, workspaces, repos in that order.
+        assert_eq!(entries.len(), 4);
+
+        assert_eq!(entries[0].kind, Kind::Agent);
+        assert_eq!(entries[0].id, "term-1");
+        assert_eq!(entries[0].dir.as_deref(), Some("/home/u/proj"));
+        assert_eq!(entries[0].primary, "proj · claude");
+        assert_eq!(entries[0].secondary, "working");
+
+        assert_eq!(entries[1].kind, Kind::Workspace);
+        assert_eq!(entries[1].id, "ws-1");
+        assert!(
+            entries[1].secondary.contains("current"),
+            "{:?}",
+            entries[1].secondary
+        );
+
+        assert_eq!(entries[2].kind, Kind::Repo);
+        assert_eq!(entries[2].id, "github.com/o/repo-a");
+        assert_eq!(entries[2].dir.as_deref(), Some("/root/github.com/o/repo-a"));
+        assert_eq!(entries[2].primary, "o/repo-a");
+        assert_eq!(entries[2].label, "repo-a");
+    }
+
+    #[test]
+    fn load_skips_a_source_when_its_include_flag_is_false() {
+        let mut map = HashMap::new();
+        map.insert("include_agents".to_string(), "false".to_string());
+        map.insert("include_workspaces".to_string(), "false".to_string());
+        let cfg = Config { map };
+        let runner = seeded();
+
+        let entries = load(&runner, &cfg, &Theme::default(), "/root");
+        // Only the two repos survive.
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.kind == Kind::Repo));
+        // And the disabled sources were never even asked for.
+        let asked_agents = runner
+            .calls()
+            .iter()
+            .any(|c| c.contains(&"agent".to_string()) && c.contains(&"list".to_string()));
+        assert!(
+            !asked_agents,
+            "agent list should not run when include_agents=false"
+        );
+    }
+
+    #[test]
+    fn load_survives_a_source_that_returns_nothing() {
+        // No seeds: every command returns empty stdout, which is unparseable JSON
+        // for the herdr sources and an empty repo list — the switcher must simply
+        // come up empty rather than panic.
+        let entries = load(
+            &MockRunner::new(),
+            &Config::default(),
+            &Theme::default(),
+            "/root",
+        );
+        assert!(entries.is_empty());
+    }
 }

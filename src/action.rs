@@ -9,6 +9,7 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 
 use crate::data::{Config, Entry, Kind};
+use crate::runner::CommandRunner;
 
 /// The targets `open_repo` understands.
 fn is_open_target(t: &str) -> bool {
@@ -49,6 +50,7 @@ pub enum Accept {
 }
 
 pub fn dispatch(
+    runner: &dyn CommandRunner,
     entry: Option<Entry>,
     accept: Accept,
     origin_pane: &str,
@@ -76,28 +78,32 @@ pub fn dispatch(
     let e = entry.ok_or_else(|| anyhow!("no selection"))?;
 
     match e.kind {
-        Kind::Workspace => focus_workspace(&e.id),
+        Kind::Workspace => focus_workspace(runner, &e.id),
         Kind::Agent => {
             let target = open_kind(accept);
             match (target, e.dir.as_deref()) {
-                (Some(t), Some(dir)) => open_repo(t, dir, origin_pane, &e.label, cfg),
-                _ => focus_agent(&e.id),
+                (Some(t), Some(dir)) => open_repo(runner, t, dir, origin_pane, &e.label, cfg),
+                _ => focus_agent(runner, &e.id),
             }
         }
         Kind::Repo => {
             let dir = e.dir.clone().unwrap_or_default();
             match accept {
-                Accept::Default => open_repo(default_target, &dir, origin_pane, &e.label, cfg),
-                Accept::Workspace => open_repo("workspace", &dir, origin_pane, &e.label, cfg),
-                Accept::Tab => open_repo("tab", &dir, origin_pane, &e.label, cfg),
-                Accept::Split => open_repo("split", &dir, origin_pane, &e.label, cfg),
-                Accept::Pane => open_repo("pane", &dir, origin_pane, &e.label, cfg),
-                Accept::Git => {
-                    open_repo("tab", &dir, origin_pane, &e.label, cfg)?;
-                    git_handoff(&e.label)
+                Accept::Default => {
+                    open_repo(runner, default_target, &dir, origin_pane, &e.label, cfg)
                 }
-                Accept::Update => update(&e.id, &e.label),
-                Accept::Remove => remove(&dir, &e.label),
+                Accept::Workspace => {
+                    open_repo(runner, "workspace", &dir, origin_pane, &e.label, cfg)
+                }
+                Accept::Tab => open_repo(runner, "tab", &dir, origin_pane, &e.label, cfg),
+                Accept::Split => open_repo(runner, "split", &dir, origin_pane, &e.label, cfg),
+                Accept::Pane => open_repo(runner, "pane", &dir, origin_pane, &e.label, cfg),
+                Accept::Git => {
+                    open_repo(runner, "tab", &dir, origin_pane, &e.label, cfg)?;
+                    git_handoff(runner, &e.label)
+                }
+                Accept::Update => update(runner, &e.id, &e.label),
+                Accept::Remove => remove(runner, &dir, &e.label),
                 Accept::Clone | Accept::UpdatePlugin => unreachable!(),
             }
         }
@@ -114,30 +120,42 @@ fn open_kind(accept: Accept) -> Option<&'static str> {
     }
 }
 
-fn herdr(args: &[&str]) -> Result<()> {
-    let status = Command::new("herdr").args(args).status()?;
-    if status.success() {
+fn herdr(runner: &dyn CommandRunner, args: &[&str]) -> Result<()> {
+    if runner.ok("herdr", args) {
         Ok(())
     } else {
         Err(anyhow!("herdr {} failed", args.join(" ")))
     }
 }
 
-fn open_repo(target: &str, path: &str, origin: &str, label: &str, cfg: &Config) -> Result<()> {
+fn open_repo(
+    runner: &dyn CommandRunner,
+    target: &str,
+    path: &str,
+    origin: &str,
+    label: &str,
+    cfg: &Config,
+) -> Result<()> {
     if !std::path::Path::new(path).is_dir() {
         return Err(anyhow!("path no longer exists: {path}"));
     }
     match target {
-        "workspace" => herdr(&[
-            "workspace",
-            "create",
-            "--cwd",
-            path,
-            "--label",
-            label,
-            "--focus",
-        ]),
-        "tab" => herdr(&["tab", "create", "--cwd", path, "--label", label, "--focus"]),
+        "workspace" => herdr(
+            runner,
+            &[
+                "workspace",
+                "create",
+                "--cwd",
+                path,
+                "--label",
+                label,
+                "--focus",
+            ],
+        ),
+        "tab" => herdr(
+            runner,
+            &["tab", "create", "--cwd", path, "--label", label, "--focus"],
+        ),
         "split" => {
             let dir = cfg.get("split_direction", "right");
             let ratio = cfg.get("split_ratio", "0.5");
@@ -154,58 +172,62 @@ fn open_repo(target: &str, path: &str, origin: &str, label: &str, cfg: &Config) 
                 path,
                 "--focus",
             ]);
-            herdr(&args)
+            herdr(runner, &args)
         }
         "pane" => {
             if origin.is_empty() {
                 return Err(anyhow!("no origin pane to cd into"));
             }
-            herdr(&["pane", "send-text", origin, &format!("cd '{path}'")])?;
-            herdr(&["pane", "send-keys", origin, "enter"])
+            herdr(
+                runner,
+                &["pane", "send-text", origin, &format!("cd '{path}'")],
+            )?;
+            herdr(runner, &["pane", "send-keys", origin, "enter"])
         }
         other => Err(anyhow!("unknown target {other}")),
     }
 }
 
-fn focus_workspace(id: &str) -> Result<()> {
-    herdr(&["workspace", "focus", id])
+fn focus_workspace(runner: &dyn CommandRunner, id: &str) -> Result<()> {
+    herdr(runner, &["workspace", "focus", id])
 }
 
-fn focus_agent(id: &str) -> Result<()> {
-    herdr(&["agent", "focus", id])
+fn focus_agent(runner: &dyn CommandRunner, id: &str) -> Result<()> {
+    herdr(runner, &["agent", "focus", id])
 }
 
-fn git_handoff(label: &str) -> Result<()> {
-    let installed = Command::new("herdr")
-        .args(["plugin", "list"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("- git-hub "))
-        .unwrap_or(false);
+fn git_handoff(runner: &dyn CommandRunner, label: &str) -> Result<()> {
+    let installed = runner
+        .capture("herdr", &["plugin", "list"])
+        .is_some_and(|o| o.contains("- git-hub "));
     if installed {
-        let _ = herdr(&["plugin", "action", "invoke", "menu", "--plugin", "git-hub"]);
+        let _ = herdr(
+            runner,
+            &["plugin", "action", "invoke", "menu", "--plugin", "git-hub"],
+        );
     } else {
         eprintln!("git-hub is not installed — opened {label} in a new tab.");
     }
     Ok(())
 }
 
-fn update(rel: &str, label: &str) -> Result<()> {
+fn update(runner: &dyn CommandRunner, rel: &str, label: &str) -> Result<()> {
     println!("\x1b[1mUpdating\x1b[0m {rel}\n");
-    let _ = Command::new("ghq").args(["get", "-u", "--", rel]).status();
+    let _ = runner.status("ghq", &["get", "-u", "--", rel]);
     println!("\n\x1b[2m{label}: press Enter to close\x1b[0m");
     let mut s = String::new();
     let _ = io::stdin().read_line(&mut s);
     Ok(())
 }
 
-fn remove(path: &str, label: &str) -> Result<()> {
+fn remove(runner: &dyn CommandRunner, path: &str, label: &str) -> Result<()> {
     println!("\x1b[1;31mRemove repository\x1b[0m\n  {path}\n");
     print!("Type the repo name (\x1b[1m{label}\x1b[0m) to confirm: ");
     io::stdout().flush().ok();
     let mut reply = String::new();
     io::stdin().read_line(&mut reply)?;
     if reply.trim() == label {
-        Command::new("rm").args(["-rf", "--", path]).status()?;
+        runner.status("rm", &["-rf", "--", path])?;
         println!("Removed {label}.");
     } else {
         println!("Aborted.");
@@ -216,6 +238,153 @@ fn remove(path: &str, label: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::MockRunner;
+    use ratatui::style::Color;
+
+    fn repo_entry(dir: &str) -> Entry {
+        Entry {
+            kind: Kind::Repo,
+            id: "o/r".into(),
+            dir: Some(dir.to_string()),
+            label: "r".into(),
+            icon: String::new(),
+            icon_color: Color::Reset,
+            primary: String::new(),
+            secondary: String::new(),
+            search: String::new(),
+        }
+    }
+
+    /// A throwaway real directory: `open_repo` refuses a path that is not one.
+    fn tmp_repo(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ghq-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn dispatch_tab_builds_the_herdr_tab_create_verb() {
+        let dir = tmp_repo("tab");
+        let path = dir.to_string_lossy().to_string();
+        let runner = MockRunner::new();
+        dispatch(
+            &runner,
+            Some(repo_entry(&path)),
+            Accept::Tab,
+            "",
+            &Config::default(),
+            ".",
+            "workspace",
+        )
+        .unwrap();
+        assert_eq!(
+            runner.calls()[0],
+            vec!["herdr", "tab", "create", "--cwd", &path, "--label", "r", "--focus"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_pane_sends_cd_to_the_captured_origin() {
+        let dir = tmp_repo("pane");
+        let path = dir.to_string_lossy().to_string();
+        let runner = MockRunner::new();
+        dispatch(
+            &runner,
+            Some(repo_entry(&path)),
+            Accept::Pane,
+            "pane-9",
+            &Config::default(),
+            ".",
+            "workspace",
+        )
+        .unwrap();
+        let calls = runner.calls();
+        assert_eq!(
+            calls[0],
+            vec![
+                "herdr",
+                "pane",
+                "send-text",
+                "pane-9",
+                &format!("cd '{path}'")
+            ]
+        );
+        assert_eq!(
+            calls[1],
+            vec!["herdr", "pane", "send-keys", "pane-9", "enter"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_default_repo_uses_the_resolved_default_target() {
+        let dir = tmp_repo("def");
+        let path = dir.to_string_lossy().to_string();
+        let runner = MockRunner::new();
+        // No force, config says "tab": Enter on a repo lands it in a tab.
+        dispatch(
+            &runner,
+            Some(repo_entry(&path)),
+            Accept::Default,
+            "",
+            &Config::default(),
+            ".",
+            "tab",
+        )
+        .unwrap();
+        assert_eq!(runner.calls()[0][..3], ["herdr", "tab", "create"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_propagates_a_herdr_failure() {
+        let dir = tmp_repo("fail");
+        let path = dir.to_string_lossy().to_string();
+        // herdr exits non-zero: the open must surface an error, not swallow it.
+        let runner = MockRunner::new().failing("tab create");
+        let res = dispatch(
+            &runner,
+            Some(repo_entry(&path)),
+            Accept::Tab,
+            "",
+            &Config::default(),
+            ".",
+            "workspace",
+        );
+        assert!(res.is_err(), "a failing herdr verb must not report success");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_a_workspace_entry_focuses_it_without_a_path() {
+        let entry = Entry {
+            kind: Kind::Workspace,
+            id: "ws-3".into(),
+            dir: None,
+            label: "work".into(),
+            icon: String::new(),
+            icon_color: Color::Reset,
+            primary: String::new(),
+            secondary: String::new(),
+            search: String::new(),
+        };
+        let runner = MockRunner::new();
+        dispatch(
+            &runner,
+            Some(entry),
+            Accept::Default,
+            "",
+            &Config::default(),
+            ".",
+            "workspace",
+        )
+        .unwrap();
+        assert_eq!(
+            runner.calls()[0],
+            vec!["herdr", "workspace", "focus", "ws-3"]
+        );
+    }
 
     #[test]
     fn forced_target_overrides_the_configured_default() {
