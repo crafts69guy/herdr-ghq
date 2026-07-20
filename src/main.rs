@@ -9,6 +9,7 @@ mod markdown;
 mod preview;
 mod runner;
 mod settings;
+mod source;
 mod state;
 mod tui;
 mod ui;
@@ -147,7 +148,7 @@ pub enum Cmd {
 
 impl Picker {
     fn new(entries: Vec<Entry>, sort: SortMode, recent: HashMap<String, u64>) -> Self {
-        let present_kinds = [Kind::Agent, Kind::Workspace, Kind::Repo]
+        let present_kinds = source::kinds()
             .into_iter()
             .filter(|&k| entries.iter().any(|e| e.kind == k))
             .collect();
@@ -807,7 +808,12 @@ fn main() -> Result<()> {
     // enables shows up on a later launch. Nothing below waits on it.
     update::spawn_refresh_if_stale(&cfg);
 
-    let entries = data::load(&runner, &cfg, &theme, &root);
+    let ctx = source::LoadCtx {
+        runner: &runner,
+        theme: &theme,
+        root: &root,
+    };
+    let entries = source::load_all(&cfg, &ctx);
     if entries.is_empty() {
         // Nothing to switch to yet — hand off to the clone flow.
         let err = Command::new("bash")

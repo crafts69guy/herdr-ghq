@@ -123,6 +123,17 @@ impl Config {
     pub fn bool(&self, key: &str, default: bool) -> bool {
         self.get(key, if default { "true" } else { "false" }) == "true"
     }
+
+    /// Build a config from key/value pairs, for tests that want a specific flag.
+    #[cfg(test)]
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        Config {
+            map: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
 }
 
 // --- entries ---------------------------------------------------------------
@@ -242,81 +253,88 @@ pub fn state_color(theme: &Theme, status: &str) -> Color {
     }
 }
 
-pub fn load(runner: &dyn CommandRunner, cfg: &Config, theme: &Theme, root: &str) -> Vec<Entry> {
+/// Running herdr agents as entries. The include toggle lives on the source
+/// (`AgentSource::enabled`), so this just loads.
+pub fn load_agents(runner: &dyn CommandRunner, theme: &Theme) -> Vec<Entry> {
     let mut entries = Vec::new();
-
-    if cfg.bool("include_agents", true) {
-        if let Some(json) = runner.capture("herdr", &["agent", "list"]) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-                if let Some(arr) = v["result"]["agents"].as_array() {
-                    for a in arr {
-                        let tid = a["terminal_id"].as_str().unwrap_or("").to_string();
-                        if tid.is_empty() {
-                            continue;
-                        }
-                        // herdr can report a pane with a terminal id but no agent label
-                        // (a stale or half-detected entry). Those are not agents.
-                        let Some(agent) = a["agent"].as_str().filter(|s| !s.is_empty()) else {
-                            continue;
-                        };
-                        let status = a["agent_status"].as_str().unwrap_or("unknown");
-                        let cwd = a["foreground_cwd"]
-                            .as_str()
-                            .or_else(|| a["cwd"].as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let base = basename(&cwd);
-                        entries.push(Entry {
-                            kind: Kind::Agent,
-                            id: tid,
-                            dir: if cwd.is_empty() { None } else { Some(cwd) },
-                            label: base.clone(),
-                            icon: "●".into(),
-                            icon_color: state_color(theme, status),
-                            primary: format!("{base} · {agent}"),
-                            secondary: status.to_string(),
-                            search: format!("{base} {agent} {status}"),
-                        });
+    if let Some(json) = runner.capture("herdr", &["agent", "list"]) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+            if let Some(arr) = v["result"]["agents"].as_array() {
+                for a in arr {
+                    let tid = a["terminal_id"].as_str().unwrap_or("").to_string();
+                    if tid.is_empty() {
+                        continue;
                     }
+                    // herdr can report a pane with a terminal id but no agent label
+                    // (a stale or half-detected entry). Those are not agents.
+                    let Some(agent) = a["agent"].as_str().filter(|s| !s.is_empty()) else {
+                        continue;
+                    };
+                    let status = a["agent_status"].as_str().unwrap_or("unknown");
+                    let cwd = a["foreground_cwd"]
+                        .as_str()
+                        .or_else(|| a["cwd"].as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let base = basename(&cwd);
+                    entries.push(Entry {
+                        kind: Kind::Agent,
+                        id: tid,
+                        dir: if cwd.is_empty() { None } else { Some(cwd) },
+                        label: base.clone(),
+                        icon: "●".into(),
+                        icon_color: state_color(theme, status),
+                        primary: format!("{base} · {agent}"),
+                        secondary: status.to_string(),
+                        search: format!("{base} {agent} {status}"),
+                    });
                 }
             }
         }
     }
+    entries
+}
 
-    if cfg.bool("include_workspaces", true) {
-        if let Some(json) = runner.capture("herdr", &["workspace", "list"]) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-                if let Some(arr) = v["result"]["workspaces"].as_array() {
-                    for w in arr {
-                        let wid = w["workspace_id"].as_str().unwrap_or("").to_string();
-                        if wid.is_empty() {
-                            continue;
-                        }
-                        let label = w["label"].as_str().unwrap_or("workspace").to_string();
-                        let num = w["number"].as_i64().unwrap_or(0);
-                        let panes = w["pane_count"].as_i64().unwrap_or(0);
-                        let focused = w["focused"].as_bool().unwrap_or(false);
-                        let mut sec = format!("#{num} · {panes}p");
-                        if focused {
-                            sec.push_str(" · current");
-                        }
-                        entries.push(Entry {
-                            kind: Kind::Workspace,
-                            id: wid,
-                            dir: None,
-                            label: label.clone(),
-                            icon: "".into(),
-                            icon_color: theme.or("accent", Color::Cyan),
-                            primary: label.clone(),
-                            secondary: sec,
-                            search: format!("{label} workspace"),
-                        });
+/// Open herdr workspaces as entries.
+pub fn load_workspaces(runner: &dyn CommandRunner, theme: &Theme) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    if let Some(json) = runner.capture("herdr", &["workspace", "list"]) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+            if let Some(arr) = v["result"]["workspaces"].as_array() {
+                for w in arr {
+                    let wid = w["workspace_id"].as_str().unwrap_or("").to_string();
+                    if wid.is_empty() {
+                        continue;
                     }
+                    let label = w["label"].as_str().unwrap_or("workspace").to_string();
+                    let num = w["number"].as_i64().unwrap_or(0);
+                    let panes = w["pane_count"].as_i64().unwrap_or(0);
+                    let focused = w["focused"].as_bool().unwrap_or(false);
+                    let mut sec = format!("#{num} · {panes}p");
+                    if focused {
+                        sec.push_str(" · current");
+                    }
+                    entries.push(Entry {
+                        kind: Kind::Workspace,
+                        id: wid,
+                        dir: None,
+                        label: label.clone(),
+                        icon: "".into(),
+                        icon_color: theme.or("accent", Color::Cyan),
+                        primary: label.clone(),
+                        secondary: sec,
+                        search: format!("{label} workspace"),
+                    });
                 }
             }
         }
     }
+    entries
+}
 
+/// Every `ghq` repository as an entry, rooted at `root`.
+pub fn load_repos(runner: &dyn CommandRunner, theme: &Theme, root: &str) -> Vec<Entry> {
+    let mut entries = Vec::new();
     if let Some(list) = runner.capture("ghq", &["list"]) {
         for rel in list.lines().filter(|l| !l.is_empty()) {
             let (host, rest) = rel.split_once('/').unwrap_or(("", rel));
@@ -335,7 +353,6 @@ pub fn load(runner: &dyn CommandRunner, cfg: &Config, theme: &Theme, root: &str)
             });
         }
     }
-
     entries
 }
 
@@ -367,75 +384,47 @@ mod tests {
     ]}}"#;
     const REPOS: &str = "github.com/o/repo-a\nbitbucket.org/o/repo-b\n";
 
-    fn seeded() -> MockRunner {
-        MockRunner::new()
-            .on("herdr agent list", AGENTS)
-            .on("herdr workspace list", WORKSPACES)
-            .on("ghq list", REPOS)
+    #[test]
+    fn load_agents_maps_json_and_drops_idless_and_labelless() {
+        let runner = MockRunner::new().on("herdr agent list", AGENTS);
+        let e = load_agents(&runner, &Theme::default());
+        // The id-less and label-less rows are dropped; only the real one stays.
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].kind, Kind::Agent);
+        assert_eq!(e[0].id, "term-1");
+        assert_eq!(e[0].dir.as_deref(), Some("/home/u/proj"));
+        assert_eq!(e[0].primary, "proj · claude");
+        assert_eq!(e[0].secondary, "working");
     }
 
     #[test]
-    fn load_maps_each_source_into_entries_in_order() {
-        let entries = load(&seeded(), &Config::default(), &Theme::default(), "/root");
-        // One valid agent (the id-less and label-less ones are dropped), one
-        // workspace, then the two repos — agents, workspaces, repos in that order.
-        assert_eq!(entries.len(), 4);
-
-        assert_eq!(entries[0].kind, Kind::Agent);
-        assert_eq!(entries[0].id, "term-1");
-        assert_eq!(entries[0].dir.as_deref(), Some("/home/u/proj"));
-        assert_eq!(entries[0].primary, "proj · claude");
-        assert_eq!(entries[0].secondary, "working");
-
-        assert_eq!(entries[1].kind, Kind::Workspace);
-        assert_eq!(entries[1].id, "ws-1");
-        assert!(
-            entries[1].secondary.contains("current"),
-            "{:?}",
-            entries[1].secondary
-        );
-
-        assert_eq!(entries[2].kind, Kind::Repo);
-        assert_eq!(entries[2].id, "github.com/o/repo-a");
-        assert_eq!(entries[2].dir.as_deref(), Some("/root/github.com/o/repo-a"));
-        assert_eq!(entries[2].primary, "o/repo-a");
-        assert_eq!(entries[2].label, "repo-a");
+    fn load_workspaces_marks_the_focused_one_current() {
+        let runner = MockRunner::new().on("herdr workspace list", WORKSPACES);
+        let e = load_workspaces(&runner, &Theme::default());
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].kind, Kind::Workspace);
+        assert_eq!(e[0].id, "ws-1");
+        assert!(e[0].secondary.contains("current"), "{:?}", e[0].secondary);
     }
 
     #[test]
-    fn load_skips_a_source_when_its_include_flag_is_false() {
-        let mut map = HashMap::new();
-        map.insert("include_agents".to_string(), "false".to_string());
-        map.insert("include_workspaces".to_string(), "false".to_string());
-        let cfg = Config { map };
-        let runner = seeded();
-
-        let entries = load(&runner, &cfg, &Theme::default(), "/root");
-        // Only the two repos survive.
-        assert_eq!(entries.len(), 2);
-        assert!(entries.iter().all(|e| e.kind == Kind::Repo));
-        // And the disabled sources were never even asked for.
-        let asked_agents = runner
-            .calls()
-            .iter()
-            .any(|c| c.contains(&"agent".to_string()) && c.contains(&"list".to_string()));
-        assert!(
-            !asked_agents,
-            "agent list should not run when include_agents=false"
-        );
+    fn load_repos_splits_host_and_roots_the_dir() {
+        let runner = MockRunner::new().on("ghq list", REPOS);
+        let e = load_repos(&runner, &Theme::default(), "/root");
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[0].kind, Kind::Repo);
+        assert_eq!(e[0].id, "github.com/o/repo-a");
+        assert_eq!(e[0].dir.as_deref(), Some("/root/github.com/o/repo-a"));
+        assert_eq!(e[0].primary, "o/repo-a");
+        assert_eq!(e[0].label, "repo-a");
     }
 
     #[test]
-    fn load_survives_a_source_that_returns_nothing() {
-        // No seeds: every command returns empty stdout, which is unparseable JSON
-        // for the herdr sources and an empty repo list — the switcher must simply
-        // come up empty rather than panic.
-        let entries = load(
-            &MockRunner::new(),
-            &Config::default(),
-            &Theme::default(),
-            "/root",
-        );
-        assert!(entries.is_empty());
+    fn a_source_that_returns_nothing_yields_no_entries() {
+        // Unseeded: empty stdout is unparseable JSON / an empty repo list, so
+        // each loader must come up empty rather than panic.
+        assert!(load_agents(&MockRunner::new(), &Theme::default()).is_empty());
+        assert!(load_workspaces(&MockRunner::new(), &Theme::default()).is_empty());
+        assert!(load_repos(&MockRunner::new(), &Theme::default(), "/root").is_empty());
     }
 }
