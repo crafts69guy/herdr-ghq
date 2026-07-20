@@ -884,8 +884,8 @@ fn main() -> Result<()> {
                 | Accept::Pane
                 | Accept::Git => history::touch(&id),
                 Accept::Remove => history::forget(&id),
-                // Clone and UpdatePlugin exec away; neither touches an entry's recency.
-                Accept::Update | Accept::Clone | Accept::UpdatePlugin => {}
+                // Clone / UpdatePlugin / Settings exec away; none touch recency.
+                Accept::Update | Accept::Clone | Accept::UpdatePlugin | Accept::Settings => {}
             }
         }
     }

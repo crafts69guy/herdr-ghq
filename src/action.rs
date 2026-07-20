@@ -47,6 +47,7 @@ pub enum Accept {
     Remove,
     Clone,
     UpdatePlugin,
+    Settings,
 }
 
 pub fn dispatch(
@@ -73,6 +74,14 @@ pub fn dispatch(
             .arg(format!("{script_dir}/update-plugin.sh"))
             .exec();
         return Err(anyhow!("failed to exec update-plugin.sh: {err}"));
+    }
+
+    // Open the settings dashboard in this pane by re-exec'ing ourselves in
+    // `--settings` mode — the same binary, a different mode. No selection needed.
+    if accept == Accept::Settings {
+        let exe = std::env::current_exe().map_err(|e| anyhow!("no current exe: {e}"))?;
+        let err = Command::new(exe).arg("--settings").exec();
+        return Err(anyhow!("failed to exec --settings: {err}"));
     }
 
     let e = entry.ok_or_else(|| anyhow!("no selection"))?;
@@ -104,7 +113,7 @@ pub fn dispatch(
                 }
                 Accept::Update => update(runner, &e.id, &e.label),
                 Accept::Remove => remove(runner, &dir, &e.label),
-                Accept::Clone | Accept::UpdatePlugin => unreachable!(),
+                Accept::Clone | Accept::UpdatePlugin | Accept::Settings => unreachable!(),
             }
         }
     }

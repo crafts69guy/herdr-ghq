@@ -613,6 +613,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     extend(
         &mut right,
         vec![
+            opt(Action::Accept(Accept::Settings), teal, "Settings"),
             opt(Action::Changelog, title, "What's new"),
             opt(Action::Accept(Accept::UpdatePlugin), peach, "Update Ghq"),
         ],

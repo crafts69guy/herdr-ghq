@@ -63,8 +63,8 @@ notification_position = "top-right"  # top-left | top-right | bottom-left | bott
 # Action names:
 #   quit help changelog next_group prev_group down up page_down page_up top
 #   bottom toggle_preview preview_down preview_up cycle_sort clear_query
-#   delete_word insert_mode normal_mode open clone update_plugin workspace tab
-#   split pane git update remove
+#   delete_word insert_mode normal_mode open clone update_plugin settings
+#   workspace tab split pane git update remove
 #
 # Insert-mode defaults already free ^u/^w for readline (clear line / delete
 # word) and put the opens on ^t (tab) / ^v (split) / ^o (cd). Examples:

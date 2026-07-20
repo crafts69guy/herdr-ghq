@@ -144,6 +144,7 @@ const NAMES: &[(&str, Action)] = &[
     ("open", Action::Accept(AcceptKind::Default)),
     ("clone", Action::Accept(AcceptKind::Clone)),
     ("update_plugin", Action::Accept(AcceptKind::UpdatePlugin)),
+    ("settings", Action::Accept(AcceptKind::Settings)),
     ("workspace", Action::Accept(AcceptKind::Workspace)),
     ("tab", Action::Accept(AcceptKind::Tab)),
     ("split", Action::Accept(AcceptKind::Split)),
@@ -213,7 +214,9 @@ impl Keymap {
         }
         if mode == Mode::Normal {
             if let Some((c, _)) = self.leader.iter().find(|(_, a)| *a == action) {
-                return Some(format!("{}{}", self.leader_chord.label(), c.label()));
+                // A space between the leader glyph and the key: `␣ g`, not `␣g`,
+                // which reads as one smudged symbol at terminal cell spacing.
+                return Some(format!("{} {}", self.leader_chord.label(), c.label()));
             }
         }
         None
@@ -299,6 +302,7 @@ fn default_insert() -> Vec<(Chord, Action)> {
         (alt(Key::Char('s')), CycleSort),
         (alt(Key::Char('c')), Changelog),
         (alt(Key::Char('u')), Accept(AcceptKind::UpdatePlugin)),
+        (alt(Key::Char(',')), Accept(AcceptKind::Settings)),
         (ctrl(Key::Char('u')), ClearQuery),
         (ctrl(Key::Char('w')), DeleteWord),
         (chord(Key::Backspace), Backspace),
@@ -354,6 +358,7 @@ fn default_leader() -> Vec<(Chord, Action)> {
         (chord(Key::Char('c')), Accept(AcceptKind::Clone)),
         (chord(Key::Char('s')), CycleSort),
         (chord(Key::Char('l')), Changelog),
+        (chord(Key::Char(',')), Accept(AcceptKind::Settings)),
         (chord(Key::Char('U')), Accept(AcceptKind::UpdatePlugin)),
     ]
 }
@@ -522,7 +527,27 @@ mod tests {
         assert_eq!(
             km.label_for(Mode::Normal, Action::Accept(AcceptKind::Git))
                 .as_deref(),
-            Some("␣g")
+            Some("␣ g")
+        );
+    }
+
+    #[test]
+    fn settings_is_reachable_in_both_modes() {
+        let km = Keymap::load(&Config::default());
+        // Insert: ⌥, opens the dashboard.
+        assert_eq!(
+            km.action(Mode::Insert, alt(Key::Char(','))),
+            Some(Action::Accept(AcceptKind::Settings))
+        );
+        // Normal: behind the leader, shown as `␣ ,`.
+        assert_eq!(
+            km.leader_action(chord(Key::Char(','))),
+            Some(Action::Accept(AcceptKind::Settings))
+        );
+        assert_eq!(
+            km.label_for(Mode::Normal, Action::Accept(AcceptKind::Settings))
+                .as_deref(),
+            Some("␣ ,")
         );
     }
 

@@ -18,7 +18,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and update-repo is `^r`. Every binding is a `chord → action` entry you can rebind with
   `keys.<action> = "chord"` in `config.toml`, and **the command bar and the `?` cheatsheet
   render from the live keymap** — they always show your actual keys for the mode you're in.
-  `keymode = "normal"` opens Vim-first. See `examples/config.toml` for the action names.
+  `keymode = "normal"` opens Vim-first. The settings dashboard is reachable from the picker
+  now too (`⌥,`, or `␣,` in Normal), and appears in `?`. See `examples/config.toml` for the
+  action names.
 
 - Both plugin actions are now reachable from the switcher itself: `⌥c` reads the
   changelog and `⌥u` updates the plugin, alongside `^u` which updates the highlighted

@@ -74,13 +74,13 @@ command bar re-labels itself per mode. Press `i` or `/` in Normal to type again.
 | `tab` / `⇧tab`     | cycle the group filter (All → Agents → Workspaces → Repos)               |
 | `⌥p` · `⌥s` · `⌥j`/`⌥k` | toggle preview · cycle sort · scroll the preview                    |
 | `^u` · `^w` · `⌫`  | clear the query · delete a word · delete a char (readline)               |
-| `⌥c` · `⌥u` · `?`  | changelog · update the plugin itself · this cheatsheet                   |
+| `⌥,` · `⌥c` · `⌥u` · `?` | settings · changelog · update the plugin itself · this cheatsheet  |
 
 **Normal mode** (`esc` from Insert; `i` or `/` returns): bare `h`/`j`/`k`/`l` motion is Vim's —
 `j`/`k` move, `g`/`G` top/bottom, `^d`/`^u` page, `H`/`L` prev/next group. Frequent opens sit
 on unshifted keys — `t` tab, `v` split, `o` cd, `w` workspace, `p` toggle preview — and the
 **`␣` leader** groups the rest: `␣g` git, `␣u` update repo, `␣x` remove, `␣c` clone, `␣s` sort,
-`␣l` changelog. `q` or `esc` closes. (`?` always shows the exact, current bindings.)
+`␣l` changelog, `␣,` settings. `q` or `esc` closes. (`?` always shows the exact, current bindings.)
 
 **Anywhere:** the **wheel** scrolls the pane under the pointer (card over the preview, list
 elsewhere); a **click** selects an entry, filters on a group tab, or runs a command-bar pill.
