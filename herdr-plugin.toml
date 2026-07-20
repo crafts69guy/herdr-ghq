@@ -20,13 +20,6 @@ contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
 [[actions]]
-id = "settings"
-title = "Configure Ghq"
-description = "Edit Ghq switcher settings in a themed dashboard."
-contexts = ["global", "pane"]
-command = ["bash", "bin/action.sh"]
-
-[[actions]]
 id = "update-plugin"
 title = "Update Ghq"
 description = "Install the newest tagged version of this plugin. Refuses to touch a linked checkout."
@@ -74,14 +67,6 @@ id = "get"
 title = "Clone Repository"
 placement = "overlay"
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/get.sh\""]
-
-[[panes]]
-id = "settings"
-title = "Ghq Settings"
-placement = "popup"
-width = 88
-height = 22
-command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]
 
 [[panes]]
 id = "update-plugin"

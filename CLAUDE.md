@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A [herdr](https://herdr.dev) plugin providing a unified switcher over three sources — running
 herdr **agents**, open herdr **workspaces**, and **ghq repos** — in one fuzzy picker. It is a
-Rust TUI (ratatui + nucleo), not an fzf wrapper. The switcher and the settings dashboard are
-two modes of the same binary; only the clone flow is still bash. The plugin needs no fzf.
+Rust TUI (ratatui + nucleo), not an fzf wrapper. The switcher and the changelog viewer are
+modes of the same binary; the settings form is a floating overlay **inside** the switcher
+(⌥,), not a separate mode or pane; only the clone flow is still bash. The plugin needs no fzf.
 See `README.md` for user-facing keybindings and configuration.
 
 ## Commands
@@ -36,7 +37,7 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
 **Two layers, joined by environment variables.** Every action starts in bash and may end in Rust:
 
 1. `bin/action.sh` is the single entrypoint for all seven manifest actions. It maps the action id
-   (via `HERDR_PLUGIN_ACTION_ID`) to a pane id (`picker` / `get` overlays, `settings` popup) and
+   (via `HERDR_PLUGIN_ACTION_ID`) to a pane id (`picker` / `get` overlays, `changelog` popup) and
    its placement, captures the **origin pane id and cwd** before the pane steals focus, and
    passes them forward as
    `GHQ_ORIGIN_PANE_ID` / `GHQ_ORIGIN_CWD` on `herdr plugin pane open`.
@@ -69,18 +70,24 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 - `markdown.rs` — the changelog/README markdown (`Block`, `parse`, `render`, `spans`,
   `flatten_links`, `wrap`), shared by `changelog`, `ui`, and `preview`
 - `state.rs` — `state_dir()` + `now()`, shared by `history` and `update`
-- `tui.rs` — the shared command-bar `pill_row` widget and `run_simple` (the settings/changelog
+- `tui.rs` — the shared command-bar `pill_row` widget and `run_simple` (the changelog
   event loop; the picker keeps its own loop for the preview worker + mouse)
 - `ui.rs` — three-row layout: Search (3) / body (list + optional preview) / full-width command bar (1);
-  `boxed()` is shared with the settings dashboard
+  `boxed()` is the shared rounded-block helper. It also draws the in-picker overlays: the `⌥c`
+  changelog, the `?` cheatsheet, and — via `settings::draw` — the `⌥,` settings form
 - `preview.rs` — the preview card (header + pills / meta column / captioned rules). Reads
   agents and workspaces from herdr's JSON with `serde_json` and styles everything from
   `Theme`; shells out to `bin/preview.sh` only for the repo file tree, which arrives as
   ANSI already and passes through `ansi-to-tui`
 - `action.rs` — `Accept` enum → herdr CLI verbs
 - `history.rs` — recency state at `$XDG_STATE_HOME/herdr-ghq/recent.tsv`, atomic write, cap 200
-- `settings.rs` — the `--settings` mode: the `SETTINGS` form, its cycle rings, and `write_setting`,
-  a flat-config writer that preserves comments and hand-added keys
+- `settings.rs` — the `Settings` overlay: the `SETTINGS` form, its cycle rings, and `write_setting`,
+  a flat-config writer that preserves comments and hand-added keys. Opened with `⌥,` and drawn as a
+  floating two-column card **over** the picker (like the `⌥c` changelog), not a separate pane; the
+  picker embeds it as `App::settings` and routes keys to `Settings::on_key` while it is shown. Edits
+  are **drafts** (`values` vs the `saved` baseline): cycling stages a value, `a` calls `apply`
+  (writes only the changed keys, then adopts the draft), and `esc` calls `discard` — nothing hits
+  `config.toml` until you apply
 - `changelog.rs` — the `--changelog` mode: parses `$HERDR_PLUGIN_ROOT/CHANGELOG.md` and renders it
   (inline markdown, hanging-indent wrap, `← installed` marker from `CARGO_PKG_VERSION`). `parse` +
   `render` are shared with the picker's `⌥c` popup, so both surfaces stay identical

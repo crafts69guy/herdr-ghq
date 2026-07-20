@@ -137,6 +137,8 @@ pub struct App {
     pub picker: Picker,
     pub preview: PreviewState,
     pub changelog: ChangelogState,
+    /// The settings form, drawn as a floating overlay when `settings.show`.
+    pub settings: settings::Settings,
     pub zones: HitZones,
 }
 
@@ -392,6 +394,8 @@ impl App {
         let picker = Picker::new(entries, sort, recent);
         let keymap = keymap::Keymap::load(&cfg);
         let mode = keymap.start_mode();
+        // Seed the settings form from the same cfg before it moves into the struct.
+        let settings = settings::Settings::new(&cfg);
         App {
             theme,
             title_color,
@@ -405,6 +409,7 @@ impl App {
             picker,
             preview,
             changelog: ChangelogState::new(),
+            settings,
             zones: HitZones::new(),
         }
     }
@@ -416,6 +421,63 @@ impl App {
         };
         let entry = self.picker.entries[idx].clone();
         self.preview.request(&entry);
+    }
+
+    /// Re-read `config.toml` and re-derive the runtime state that depends on it, so a
+    /// setting applied in the overlay takes effect in this session rather than on the
+    /// next launch. Called after `Settings::apply` reports it wrote something.
+    ///
+    /// The entry list is reloaded too, so `include_agents` / `include_workspaces` and
+    /// the label style update live; that resettles the selection at the top the way a
+    /// `sort` change reorders it anyway. `mode` is left as the user has it — `keymode`
+    /// only picks the *start* mode.
+    fn reload_config(&mut self) {
+        let runner = runner::SystemRunner;
+        let cfg = Config::load();
+
+        self.title_color = self
+            .theme
+            .resolve(&cfg.get("title_color", "peach"))
+            .unwrap_or_else(|| self.theme.or("accent", ratatui::style::Color::Cyan));
+        self.picker.sort = SortMode::parse(&cfg.get("sort", "recent"));
+        self.keymap = keymap::Keymap::load(&cfg);
+
+        // Preview geometry is read straight from these fields at draw time; the readme
+        // toggle lives in the worker's config, so respawn it and force a re-render.
+        self.preview.enabled = cfg.get("preview", "enabled") != "disabled";
+        self.preview.position = cfg.get("preview_position", "right");
+        self.preview.pct = cfg
+            .get("preview_size", "60%")
+            .trim_end_matches('%')
+            .parse::<u16>()
+            .unwrap_or(52)
+            .clamp(20, 80);
+        self.preview.worker =
+            preview::Worker::spawn(self.script_dir.clone(), cfg.clone(), self.theme.clone());
+        self.preview.id.clear();
+
+        // Reload entries so the source toggles and label style apply.
+        let root = data::ghq_root(&runner);
+        let ctx = source::LoadCtx {
+            runner: &runner,
+            theme: &self.theme,
+            root: &root,
+        };
+        let entries = source::load_all(&cfg, &ctx);
+        self.picker.present_kinds = source::kinds()
+            .into_iter()
+            .filter(|&k| entries.iter().any(|e| e.kind == k))
+            .collect();
+        self.picker.entries = entries;
+        // A group whose kind just disappeared falls back to All rather than an empty list.
+        if let GroupFilter::Only(k) = self.picker.group {
+            if !self.picker.present_kinds.contains(&k) {
+                self.picker.group = GroupFilter::All;
+            }
+        }
+        self.picker.recompute();
+
+        self.cfg = cfg;
     }
 
     /// The entry drawn at screen row `y`, if that row holds one. Rows map back
@@ -440,6 +502,12 @@ impl App {
         }
         if self.changelog.show {
             self.changelog.show = false;
+            return Flow::Continue;
+        }
+        // A click while the settings form is open closes it, the way it is modal to
+        // keys — the pointer is not used to pick a row.
+        if self.settings.show {
+            self.settings.show = false;
             return Flow::Continue;
         }
         // The command bar: one row, so the x span is the whole test. A pill runs
@@ -553,6 +621,7 @@ fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
         Action::Quit => return Flow::Quit,
         Action::Help => app.show_help = true,
         Action::Changelog => app.changelog.open(),
+        Action::Settings => app.settings.open(),
         Action::NextGroup => app.picker.cycle_group(1),
         Action::PrevGroup => app.picker.cycle_group(-1),
         Action::Down => app.picker.move_sel(1),
@@ -592,6 +661,21 @@ fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
 
 fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+
+    // The settings overlay is a form: while open it owns navigation, Enter (cycle),
+    // and the in-place split_ratio edit, so route every key to it. `esc`/`q` close it
+    // from inside `on_key`; `^c` still quits the picker so you are never trapped.
+    if app.settings.show {
+        if ctrl && matches!(k.code, KeyCode::Char('c')) {
+            return Flow::Quit;
+        }
+        // An apply persisted a change: re-read config.toml and re-derive the live
+        // state so the new value takes effect now, not on the next launch.
+        if app.settings.on_key(k) {
+            app.reload_config();
+        }
+        return Flow::Continue;
+    }
 
     // The changelog popup scrolls, so it cannot dismiss on any key the way the help
     // cheatsheet does; esc/q closes it and the movement keys drive it.
@@ -811,12 +895,12 @@ fn cli_config(args: &[String]) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    // One binary, many modes. bin/settings.sh execs us with --settings so both
-    // dashboards share this build; the clone flow execs `open`/`config` so the
-    // herdr verbs and the flat-config reader live only here, not mirrored in bash.
+    // One binary, many modes. bin/changelog.sh execs us with --changelog for the
+    // standalone changelog pane; the clone flow execs `open`/`config` so the herdr
+    // verbs and the flat-config reader live only here, not mirrored in bash. Settings
+    // is not a mode: it is an in-picker overlay (see settings::Settings).
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("--settings") => return settings::main(),
         Some("--changelog") => return changelog::main(),
         Some("--update-check") => return update::main(),
         Some("open") => return cli_open(&args[1..]),
@@ -832,11 +916,6 @@ fn main() -> Result<()> {
         .map(|r| format!("{r}/bin"))
         .unwrap_or_else(|_| ".".into());
     let origin = env::var("GHQ_ORIGIN_PANE_ID").unwrap_or_default();
-    // Resolve where Enter lands a repo once, before `cfg` moves into the App.
-    let default_target = action::resolve_default_target(
-        action::forced_target().as_deref(),
-        &cfg.get("default_target", "workspace"),
-    );
 
     // Hands the network to a detached child and returns immediately; the badge it
     // enables shows up on a later launch. Nothing below waits on it.
@@ -865,6 +944,12 @@ fn main() -> Result<()> {
 
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
+        // Resolve where Enter lands a repo from the (possibly just-applied) config, so a
+        // `default_target` change made in the settings overlay is honoured this session.
+        let default_target = action::resolve_default_target(
+            action::forced_target().as_deref(),
+            &app.cfg.get("default_target", "workspace"),
+        );
         action::dispatch(
             &runner,
             entry,
@@ -884,8 +969,8 @@ fn main() -> Result<()> {
                 | Accept::Pane
                 | Accept::Git => history::touch(&id),
                 Accept::Remove => history::forget(&id),
-                // Clone / UpdatePlugin / Settings exec away; none touch recency.
-                Accept::Update | Accept::Clone | Accept::UpdatePlugin | Accept::Settings => {}
+                // Clone / UpdatePlugin exec away; none touch recency.
+                Accept::Update | Accept::Clone | Accept::UpdatePlugin => {}
             }
         }
     }
@@ -1024,6 +1109,29 @@ mod tests {
         let screen = rendered(&mut app, 120, 40);
         assert!(screen.contains("Scroll that pane"), "{screen}");
         assert!(screen.contains("Select or run it"), "{screen}");
+    }
+
+    #[test]
+    fn settings_is_offered_in_the_bar_and_floats_over_the_picker() {
+        let mut app = app_with_layout();
+        // The command bar advertises settings alongside the other verbs.
+        let bar = rendered(&mut app, 120, 40);
+        assert!(
+            bar.lines().last().unwrap().contains("settings"),
+            "the footer must offer settings: {:?}",
+            bar.lines().last().unwrap()
+        );
+        // ⌥, opens it, and the card draws *over* the list rather than replacing it —
+        // the picker's Search box is still framed behind the overlay.
+        handle_key(&mut app, key(KeyCode::Char(','), KeyModifiers::ALT));
+        assert!(app.settings.show);
+        let screen = rendered(&mut app, 120, 40);
+        assert!(screen.contains("Ghq Settings"), "{screen}");
+        assert!(screen.contains("default_target"), "{screen}");
+        assert!(
+            screen.contains("Search"),
+            "the picker must stay behind the overlay: {screen}"
+        );
     }
 
     #[test]

@@ -78,6 +78,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.changelog.show {
         draw_changelog(f, app, f.area());
     }
+    if app.settings.show {
+        crate::settings::draw(f, f.area(), &app.theme, app.title_color, &app.settings);
+    }
     if app.show_help {
         draw_help(f, app, f.area());
     }
@@ -385,7 +388,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     // from the keymap for the *current mode*, so a remap or an Insert↔Normal
     // switch re-labels every pill (e.g. `git` shows `^g` in Insert, `␣g` in
     // Normal). An action with no binding in this mode drops out of the bar.
-    let items: [(Action, &str, Color); 10] = [
+    let items: [(Action, &str, Color); 11] = [
         (
             Action::Accept(Accept::Default),
             "open",
@@ -431,6 +434,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             "clone",
             t.or("lavender", Color::Magenta),
         ),
+        (Action::Settings, "settings", t.or("teal", Color::Cyan)),
         (Action::Help, "help", t.or("lavender", Color::White)),
     ];
     // Own the caps so the `Pill`s can borrow them for `pill_row`.
@@ -459,7 +463,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     // A newer version, mentioned once, at the far end and out of the way of the keys.
     // Nothing here installs anything; it is a fact, not a prompt — so it yields to the
     // command bar rather than overdrawing it, and simply goes unsaid when the keys
-    // already fill the row. The changelog and settings panes still show the version.
+    // already fill the row. The changelog pane still shows the version.
     if let Some(v) = &app.update {
         let badge = format!(" ↑ v{v} ");
         let w = badge.chars().count() as u16;
@@ -613,7 +617,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     extend(
         &mut right,
         vec![
-            opt(Action::Accept(Accept::Settings), teal, "Settings"),
+            opt(Action::Settings, teal, "Settings"),
             opt(Action::Changelog, title, "What's new"),
             opt(Action::Accept(Accept::UpdatePlugin), peach, "Update Ghq"),
         ],

@@ -112,7 +112,6 @@ Bind any of these the same way as `ghq.menu`:
 | -------------------------------------------------------- | -------------------------------------------------------------- |
 | `ghq.menu`                                               | the switcher                                                   |
 | `ghq.get`                                                | the clone flow                                                 |
-| `ghq.settings`                                           | the settings dashboard                                         |
 | `ghq.changelog`                                          | what changed, with your installed version marked               |
 | `ghq.update-plugin`                                      | install a newer version (refuses to touch a `link`ed checkout) |
 | `ghq.open-workspace` · `ghq.open-tab` · `ghq.open-split` | the switcher with `enter`'s repo target forced                 |
@@ -120,9 +119,11 @@ Bind any of these the same way as `ghq.menu`:
 ## Configuration
 
 Settings live in a flat `config.toml` in the plugin's config dir (`herdr plugin config-dir ghq`).
-Edit it directly, copy [`examples/config.toml`](examples/config.toml), or run `ghq.settings` —
-a form you walk with `↑`/`↓`, where `enter` cycles each value. Changes apply on the next
-invocation; no server reload needed.
+Edit it directly, copy [`examples/config.toml`](examples/config.toml), or press `⌥,` in the
+switcher — a floating form you walk with `↑`/`↓`, where `enter` cycles each value. Edits are
+drafts: a `●` marks each changed row, `a` applies them all to `config.toml`, and `esc` discards
+them. Applying takes effect in the running switcher — the list re-sorts, sources and preview
+reload, colours and key rebinds update on the spot; no relaunch or server reload needed.
 
 Every key is documented in `examples/config.toml`. The ones you're most likely to want:
 
@@ -153,7 +154,7 @@ Set it to `false` and the plugin makes no outbound requests at all.
 
 Each action starts in `bin/action.sh`, which captures the origin pane id and cwd before the
 new pane steals focus, then opens that pane — an overlay for the picker and clone flow, a
-popup for settings and the changelog.
+popup for the changelog.
 
 The picker itself is the Rust TUI in `src/`, built to `target/release/herdr-ghq-switcher` by
 `bin/picker.sh` on first run. It reads `herdr agent list`, `herdr workspace list`, and
@@ -163,8 +164,9 @@ accept it maps the key to a herdr CLI verb — `agent focus`, `workspace focus`,
 `workspace create`, `tab create`, `pane split`, `pane send-text` — always targeting the
 captured origin pane or a real id from herdr, never a guessed one.
 
-The settings dashboard and changelog viewer are the same binary in `--settings` /
-`--changelog` mode. Only the clone flow is still bash (`bin/get.sh`).
+The changelog viewer is the same binary in `--changelog` mode; the settings form is a
+floating overlay inside the switcher itself (`⌥,`), not a separate pane. Only the clone flow
+is still bash (`bin/get.sh`).
 
 ## Contributing
 

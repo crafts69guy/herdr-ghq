@@ -5,8 +5,7 @@
 //! verbatim to `gh release create` — the local file and the GitHub release notes are
 //! the same text by construction.
 //!
-//! Like the settings dashboard, this draws no border of its own: herdr frames and
-//! titles the popup pane already.
+//! This draws no border of its own: herdr frames and titles the popup pane already.
 //!
 //! The markdown parse/render live in [`crate::markdown`], shared with the picker's
 //! `⌥c` popup so the two surfaces cannot drift apart.

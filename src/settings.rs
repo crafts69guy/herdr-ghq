@@ -1,36 +1,41 @@
-//! Settings dashboard: the switcher's TUI vocabulary applied to the plugin's flat
+//! Settings form: the switcher's TUI vocabulary applied to the plugin's flat
 //! `config.toml`.
 //!
 //! This was an fzf list, which made a fixed form behave like a search: a fuzzy prompt
-//! and a match counter. You do not *find* `sort` in this list, you walk
-//! to it — so it is a form now, in the picker's colours and command-bar pills.
+//! and a match counter. You do not *find* `sort` in this list, you walk to it — so it
+//! is a form now, in the picker's colours and command-bar pills.
 //!
-//! It draws no border of its own. This runs in a popup pane, which herdr already frames
-//! and titles from the manifest; a second box would double the title and cost two rows
-//! and two columns of a window sized to fit exactly. The picker can afford its boxes
-//! because its overlay title is minimised to an icon.
+//! Like the `⌥c` changelog and the remove confirm, it lives **inside** the picker: a
+//! centred, rounded, ink-filled floating card — the `?` cheatsheet's shape — drawn over
+//! the list rather than a separate herdr pane, so opening it never costs you your place.
+//! The settings sit in two columns; the hint for the selected row is spelled out along
+//! the bottom, above the command-bar pills, since the narrow columns have no room for a
+//! per-row hint.
 //!
-//! Values are written the moment they change, as the fzf version did: the picker reads
-//! `config.toml` at startup, so no server reload is involved.
+//! Edits are **drafts**: cycling a value stages it (a peach dot marks a changed row) but
+//! writes nothing. `a` applies the whole draft to `config.toml` at once; `esc` discards
+//! it. `on_key`/`apply` return `true` on a successful apply so the picker re-reads the
+//! config and updates its live state (see `App::reload_config`) — an applied change takes
+//! effect in the running session, no relaunch or server reload needed.
 
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::data::{Config, Theme};
-use crate::tui::{self, Flow, Pill, SimpleMode};
+use crate::tui::{self, Pill};
 
 /// How Enter changes a setting.
 enum Cycle {
     /// Step through a fixed ring. An unrecognised current value lands on the first
-    /// entry, matching the `*)` fallback each `cycle()` case in settings.sh had.
+    /// entry, matching the `*)` fallback each `cycle()` case in the old bash form had.
     Ring(&'static [&'static str]),
     /// Free text, typed in place. Only `split_ratio` wants this.
     Prompt,
@@ -196,8 +201,8 @@ fn next_in(ring: &[&str], current: &str) -> String {
 }
 
 /// Replace `key`'s line in the flat config, or append one. Comments, unknown keys,
-/// and ordering survive — this file is hand-edited too. Mirrors settings.sh's
-/// `config_set`, including its `key = "value"` output shape.
+/// and ordering survive — this file is hand-edited too. Keeps the flat
+/// `key = "value"` output shape the original bash writer used.
 fn write_setting(path: &PathBuf, key: &str, value: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -233,7 +238,7 @@ fn write_setting(path: &PathBuf, key: &str, value: &str) -> Result<()> {
 fn config_path() -> PathBuf {
     let dir = std::env::var("HERDR_PLUGIN_CONFIG_DIR").unwrap_or_default();
     if dir.is_empty() {
-        // Same fallback settings.sh uses when herdr does not hand us a config dir.
+        // Same fallback used when herdr does not hand us a config dir.
         let root = std::env::var("HERDR_PLUGIN_ROOT").unwrap_or_else(|_| ".".into());
         PathBuf::from(root).join(".config").join("config.toml")
     } else {
@@ -241,53 +246,98 @@ fn config_path() -> PathBuf {
     }
 }
 
-pub struct App {
-    theme: Theme,
-    title_color: Color,
+/// The settings form, embedded in the picker as a floating overlay (like the `⌥c`
+/// changelog).
+///
+/// Edits are **drafts**: cycling a value or typing a `split_ratio` only changes
+/// `values` in memory. Nothing touches `config.toml` until you **apply** (`a`); `esc`
+/// discards every unsaved change and closes. `saved` is the last-applied snapshot —
+/// the baseline both `dirty` and `discard` compare against — so opening, editing, and
+/// leaving without applying is a no-op on disk.
+pub struct Settings {
+    pub show: bool,
+    /// The working draft, one per `SETTINGS` entry.
     values: Vec<String>,
+    /// What is on disk (== the last applied draft). `values` differing from this is
+    /// the unsaved state.
+    saved: Vec<String>,
     sel: usize,
     /// `Some` while typing a `Cycle::Prompt` value.
     editing: Option<String>,
     path: PathBuf,
-    /// Shown in the command bar when a write fails; the form stays usable.
+    /// Shown in the command bar when an apply fails; the form stays usable.
     error: Option<String>,
 }
 
-impl App {
-    fn new(cfg: &Config, theme: Theme, path: PathBuf) -> Self {
-        let title_color = theme
-            .resolve(&cfg.get("title_color", "peach"))
-            .unwrap_or(Color::Yellow);
-        let values = SETTINGS.iter().map(|s| cfg.get(s.key, s.default)).collect();
-        App {
-            theme,
-            title_color,
+impl Settings {
+    /// Seed the values from the picker's already-loaded config, so no second read
+    /// of `config.toml` is needed.
+    pub fn new(cfg: &Config) -> Self {
+        let values: Vec<String> = SETTINGS.iter().map(|s| cfg.get(s.key, s.default)).collect();
+        Settings {
+            show: false,
+            saved: values.clone(),
             values,
             sel: 0,
             editing: None,
-            path,
+            path: config_path(),
             error: None,
         }
     }
 
-    fn commit(&mut self, value: String) {
-        let key = SETTINGS[self.sel].key;
-        match write_setting(&self.path, key, &value) {
-            Ok(()) => {
-                self.values[self.sel] = value;
-                self.error = None;
-            }
-            Err(e) => self.error = Some(format!("could not save {key}: {e}")),
+    /// Open the overlay at the top of the form. Values already match `saved` (a close
+    /// applies or discards), so there is nothing to reset but the cursor.
+    pub fn open(&mut self) {
+        self.sel = 0;
+        self.editing = None;
+        self.error = None;
+        self.show = true;
+    }
+
+    /// True when the draft has unsaved changes.
+    fn dirty(&self) -> bool {
+        self.values != self.saved
+    }
+
+    /// Stage a value on the selected row. Draft only — no disk write.
+    fn set_draft(&mut self, value: String) {
+        self.values[self.sel] = value;
+    }
+
+    /// Write every changed row to `config.toml`, then adopt the draft as the new
+    /// baseline. A failed write leaves the form dirty with the error shown, so it can
+    /// be retried. Comments and hand-added keys survive (see `write_setting`).
+    ///
+    /// Returns `true` when it actually persisted a change, so the picker can re-read
+    /// the config and apply it live rather than waiting for the next launch.
+    fn apply(&mut self) -> bool {
+        if !self.dirty() {
+            return false;
         }
+        for (i, setting) in SETTINGS.iter().enumerate() {
+            if self.values[i] != self.saved[i] {
+                if let Err(e) = write_setting(&self.path, setting.key, &self.values[i]) {
+                    self.error = Some(format!("could not save {}: {e}", setting.key));
+                    return false;
+                }
+            }
+        }
+        self.saved = self.values.clone();
+        self.error = None;
+        true
     }
-}
 
-impl SimpleMode for App {
-    fn draw(&mut self, f: &mut Frame) {
-        draw(f, self);
+    /// Drop every unsaved change back to the last-applied baseline.
+    fn discard(&mut self) {
+        self.values = self.saved.clone();
+        self.editing = None;
+        self.error = None;
     }
 
-    fn on_key(&mut self, k: KeyEvent) -> Flow {
+    /// Handle a key while the overlay is open. `a` applies the draft; `esc`/`q`
+    /// (outside an edit) discard it and close. The caller keeps `^c` as the picker's
+    /// quit. Returns `true` when a key applied a change, so the caller reloads config.
+    pub fn on_key(&mut self, k: KeyEvent) -> bool {
         if let Some(buf) = self.editing.as_mut() {
             match k.code {
                 KeyCode::Esc => self.editing = None,
@@ -295,7 +345,7 @@ impl SimpleMode for App {
                     let v = buf.trim().to_string();
                     self.editing = None;
                     if !v.is_empty() {
-                        self.commit(v);
+                        self.set_draft(v);
                     }
                 }
                 KeyCode::Backspace => {
@@ -304,13 +354,15 @@ impl SimpleMode for App {
                 KeyCode::Char(c) => buf.push(c),
                 _ => {}
             }
-            return Flow::Continue;
+            return false;
         }
 
-        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
-            KeyCode::Esc | KeyCode::Char('q') => return Flow::Quit,
-            KeyCode::Char('c') if ctrl => return Flow::Quit,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.discard();
+                self.show = false;
+            }
+            KeyCode::Char('a') => return self.apply(),
             KeyCode::Down | KeyCode::Char('j') => {
                 self.sel = (self.sel + 1) % SETTINGS.len();
             }
@@ -322,105 +374,171 @@ impl SimpleMode for App {
             KeyCode::Enter => match &SETTINGS[self.sel].cycle {
                 Cycle::Ring(ring) => {
                     let next = next_in(ring, &self.values[self.sel]);
-                    self.commit(next);
+                    self.set_draft(next);
                 }
                 Cycle::Prompt => self.editing = Some(self.values[self.sel].clone()),
             },
             _ => {}
         }
-        Flow::Continue
+        false
     }
 }
 
-fn draw(f: &mut Frame, app: &App) {
-    let t = &app.theme;
-    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
-    let text = t.or("text", Color::Reset);
-    let sub = t.or("subtext0", Color::Gray);
-    let accent = t.or("accent", Color::Cyan);
-    let title = app.title_color;
+/// Which section headings fill the left column; the rest go right. Kept in display
+/// order within each column, so navigating down walks the left column top-to-bottom
+/// and then continues into the right.
+const LEFT_GROUPS: &[&str] = &["Open", "Sources", "Keys", "Preview"];
+const RIGHT_GROUPS: &[&str] = &["Appearance", "Clone", "Updates", "Notifications"];
 
-    // No box of our own: a popup pane already has herdr's frame and its manifest title.
-    // Drawing a second bordered box inside it doubles the title. Instead it borrows the
-    // `?` cheatsheet's language — section headings in the title colour, values as filled
-    // pills, and a `▌` marker on the selected row — so the two surfaces feel like one.
-    let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
-    let area = rows[0];
-    let width = area.width as usize;
+const NAME_W: usize = 21; // widest key ("notification_position")
+const PILL_W: usize = 12; // widest value ("bottom-right")
+/// Marker + key + gap + padded pill = one column's width. Both columns share it so
+/// their pills line up; a per-row hint would not fit, so it moves to the footer.
+const COL_W: usize = 2 + NAME_W + 1 + (PILL_W + 2);
 
-    // Build the whole grouped card: a heading when the group changes, then a row per
-    // setting. Remember where the selected setting landed so the window scrolls to it.
-    let name_w = 22usize; // widest key ("notification_position")
-    let pill_w = 12usize; // widest value ("bottom-right")
+/// One column's lines: a title-coloured heading when the group changes, then a
+/// `marker · key · value-pill` row per setting whose group belongs to this column.
+fn column(s: &Settings, theme: &Theme, title: Color, groups: &[&str]) -> Vec<Line<'static>> {
+    let ink = theme.or("panel_bg", Color::Rgb(16, 18, 20));
+    let text = theme.or("text", Color::Reset);
+    let sub = theme.or("subtext0", Color::Gray);
+    let accent = theme.or("accent", Color::Cyan);
+    let peach = theme.or("peach", Color::Yellow);
+
     let mut lines: Vec<Line> = Vec::new();
-    let mut sel_row = 0usize;
     let mut last_group = "";
-    for (i, s) in SETTINGS.iter().enumerate() {
-        if s.group != last_group {
+    for (i, setting) in SETTINGS.iter().enumerate() {
+        if !groups.contains(&setting.group) {
+            continue;
+        }
+        if setting.group != last_group {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
             lines.push(Line::from(Span::styled(
-                format!(" {}", s.group),
+                format!(" {}", setting.group),
                 Style::default().fg(title).add_modifier(Modifier::BOLD),
             )));
-            last_group = s.group;
+            last_group = setting.group;
         }
 
-        let selected = i == app.sel;
-        if selected {
-            sel_row = lines.len();
-        }
-        let editing = selected && app.editing.is_some();
-        let value = match &app.editing {
+        let selected = i == s.sel;
+        let editing = selected && s.editing.is_some();
+        let changed = s.values[i] != s.saved[i];
+        let value = match &s.editing {
             Some(buf) if selected => format!("{buf}▏"),
-            _ => app.values[i].clone(),
+            _ => s.values[i].clone(),
         };
         // The selected (or editing) row's value pill uses the title colour to pop;
         // the rest sit in a calm accent, the way the cheatsheet's key caps do.
         let pill_bg = if selected || editing { title } else { accent };
-        let used = 2 + name_w + 1 + (pill_w + 2) + 2;
-        let hint_w = width.saturating_sub(used);
         lines.push(Line::from(vec![
+            // Two one-cell marks: the selection bar, then a peach dot on a row whose
+            // draft differs from disk — so you can see what an apply would write.
             Span::styled(
-                if selected { "▌ " } else { "  " }.to_string(),
+                if selected { "▌" } else { " " },
                 Style::default().fg(accent),
             ),
+            Span::styled(if changed { "●" } else { " " }, Style::default().fg(peach)),
             Span::styled(
-                format!("{:<name_w$}", s.key),
+                format!("{:<NAME_W$}", setting.key),
                 Style::default().fg(if selected { text } else { sub }),
             ),
             Span::raw(" "),
             Span::styled(
-                format!(" {value:<pill_w$} "),
+                format!(" {value:<PILL_W$} "),
                 Style::default()
                     .bg(pill_bg)
                     .fg(ink)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            Span::styled(format!("{:<hint_w$}", s.hint), Style::default().fg(sub)),
         ]));
     }
+    lines
+}
 
-    // Scroll to keep the selected row in view with a little context above it (its
-    // heading, usually), never past the last screenful.
-    let visible = (area.height as usize).max(1);
-    let max_off = lines.len().saturating_sub(visible);
-    let offset = sel_row.saturating_sub(2).min(max_off);
-    let shown: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
+/// Draw the settings card centred in `area`, over whatever is behind it. The picker
+/// owns `theme`/`title`, so the overlay matches the rest of its surfaces.
+pub fn draw(f: &mut Frame, area: Rect, theme: &Theme, title: Color, s: &Settings) {
+    let ink = theme.or("panel_bg", Color::Rgb(16, 18, 20));
+    let sub = theme.or("subtext0", Color::Gray);
+    let border = theme.or("accent", Color::Cyan);
 
-    f.render_widget(Paragraph::new(shown), area);
-    draw_bar(f, app, rows[1]);
+    // A centred, rounded, ink-filled floating card — the `?` cheatsheet's shape — over
+    // the picker. Two columns of settings, the selected row's hint spelled out below
+    // them, and the command-bar pills at the foot.
+    let left = column(s, theme, title, LEFT_GROUPS);
+    let right = column(s, theme, title, RIGHT_GROUPS);
+    let body_h = left.len().max(right.len()) as u16;
+
+    let want_w = (2 * COL_W + 4) as u16; // two columns + inner margin + border
+    let w = want_w.min(area.width.saturating_sub(2));
+    let want_h = body_h + 2 /* border */ + 2 /* hint + pills */;
+    let h = want_h.min(area.height.saturating_sub(1)).max(6);
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(w)) / 2,
+        area.y + (area.height.saturating_sub(h)) / 2,
+        w,
+        h,
+    );
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(ink))
+        .title(Span::styled(
+            " 󰒓 Ghq Settings ",
+            Style::default().fg(title).add_modifier(Modifier::BOLD),
+        ))
+        .title(
+            Line::from(if s.dirty() {
+                Span::styled(
+                    " ● unsaved ",
+                    Style::default()
+                        .fg(theme.or("peach", Color::Yellow))
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(" saved ", Style::default().fg(sub))
+            })
+            .right_aligned(),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let rows = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .horizontal_margin(1)
+        .split(rows[0]);
+    f.render_widget(Paragraph::new(left), cols[0]);
+    f.render_widget(Paragraph::new(right), cols[1]);
+
+    // The hint the narrow columns cannot carry, shown for the selected row only.
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {}", SETTINGS[s.sel].hint),
+            Style::default().fg(sub),
+        ))),
+        rows[1],
+    );
+
+    draw_bar(f, s, rows[2], theme);
 }
 
 /// The picker's coloured-pill command bar, with this form's verbs.
-fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
+fn draw_bar(f: &mut Frame, s: &Settings, area: Rect, theme: &Theme) {
+    let ink = theme.or("panel_bg", Color::Rgb(16, 18, 20));
 
-    if let Some(err) = &app.error {
-        let red = t.or("red", Color::Red);
+    if let Some(err) = &s.error {
+        let red = theme.or("red", Color::Red);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!(" {err} "),
@@ -431,30 +549,30 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let pills: Vec<Pill> = if app.editing.is_some() {
+    // The verbs follow the state: typing an edit, an unsaved draft (apply/discard on
+    // offer), or a clean form (nothing to save, so `esc` just closes).
+    let pills: Vec<Pill> = if s.editing.is_some() {
         vec![
-            Pill::new("↵", "save", t.or("accent", Color::Cyan)),
-            Pill::new("esc", "cancel", t.or("red", Color::Red)),
+            Pill::new("↵", "set", theme.or("accent", Color::Cyan)),
+            Pill::new("esc", "cancel", theme.or("red", Color::Red)),
+        ]
+    } else if s.dirty() {
+        vec![
+            Pill::new("↵", "change", theme.or("accent", Color::Cyan)),
+            Pill::new("↑ ↓", "move", theme.or("blue", Color::Blue)),
+            Pill::new("a", "apply", theme.or("green", Color::Green)),
+            Pill::new("esc", "discard", theme.or("red", Color::Red)),
         ]
     } else {
         vec![
-            Pill::new("↵", "change", t.or("accent", Color::Cyan)),
-            Pill::new("↑ ↓", "move", t.or("blue", Color::Blue)),
-            Pill::new("esc", "done", t.or("red", Color::Red)),
+            Pill::new("↵", "change", theme.or("accent", Color::Cyan)),
+            Pill::new("↑ ↓", "move", theme.or("blue", Color::Blue)),
+            Pill::new("esc", "close", theme.or("red", Color::Red)),
         ]
     };
 
     let (spans, _) = tui::pill_row(&pills, ink, area.x);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-/// Entry point for `herdr-ghq-switcher --settings`.
-pub fn main() -> Result<()> {
-    let cfg = Config::load();
-    let theme = Theme::load();
-    let mut app = App::new(&cfg, theme, config_path());
-
-    tui::run_simple(&mut app)
 }
 
 #[cfg(test)]
@@ -470,13 +588,10 @@ mod tests {
 
     #[test]
     fn draw_renders_grouped_rows_with_heading_value_and_hint() {
-        let app = App::new(
-            &Config::default(),
-            Theme::default(),
-            PathBuf::from("/tmp/x"),
-        );
+        let settings = Settings::new(&Config::default());
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, f.area(), &Theme::default(), Color::Yellow, &settings))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let screen: String = (0..24)
             .map(|y| {
@@ -486,18 +601,21 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        // A section heading, the first setting's value, and a hint all render.
+        // Both columns' headings, the first setting's value, and the selected row's
+        // hint all render inside the floating card.
         assert!(screen.contains("Open"), "{screen}");
+        assert!(screen.contains("Appearance"), "{screen}"); // the right column
         assert!(screen.contains("default_target"), "{screen}");
         assert!(screen.contains("workspace"), "{screen}");
         assert!(screen.contains("where Enter opens a repo"), "{screen}");
-        // The selected row (row 0) carries the ▌ marker.
+        // The selected row (row 0) carries the ▌ marker, and the card is boxed.
         assert!(screen.contains('▌'), "{screen}");
+        assert!(screen.contains('╭'), "{screen}");
     }
 
     #[test]
     fn unknown_value_restarts_the_ring() {
-        // settings.sh's `*)` fallback: a hand-edited or empty value lands on the first.
+        // The `*)` fallback: a hand-edited or empty value lands on the first.
         assert_eq!(next_in(&["true", "false"], ""), "true");
         assert_eq!(next_in(&["true", "false"], "yes"), "true");
     }
@@ -552,5 +670,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn key(c: KeyCode) -> KeyEvent {
+        KeyEvent::new(c, crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn enter_drafts_a_value_without_touching_disk() {
+        let dir = std::env::temp_dir().join(format!("ghq-draft-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let mut s = Settings::new(&Config::default());
+        s.path = path.clone();
+        s.open();
+        // Enter on default_target (a ring) advances it, in memory only.
+        s.on_key(key(KeyCode::Enter));
+        assert_eq!(s.values[0], "tab");
+        assert!(s.dirty(), "a staged change must read as unsaved");
+        assert!(!path.exists(), "a draft must not write config.toml");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn apply_writes_the_draft_and_clears_dirty() {
+        let dir = std::env::temp_dir().join(format!("ghq-apply-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let mut s = Settings::new(&Config::default());
+        s.path = path.clone();
+        s.open();
+        s.on_key(key(KeyCode::Enter)); // draft default_target = "tab"
+        let applied = s.on_key(key(KeyCode::Char('a'))); // apply
+        assert!(
+            applied,
+            "a successful apply must report it, so the picker reloads"
+        );
+        assert!(!s.dirty(), "apply must adopt the draft as the baseline");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("default_target = \"tab\""),
+            "apply must persist the change: {text:?}"
+        );
+        // Applying again with nothing staged writes nothing and asks for no reload.
+        assert!(
+            !s.on_key(key(KeyCode::Char('a'))),
+            "a no-op apply must not reload"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn esc_discards_the_draft_and_closes() {
+        let mut s = Settings::new(&Config::default());
+        // Point away from the real config; esc must not write regardless.
+        s.path = std::env::temp_dir().join("ghq-never-written.toml");
+        s.open();
+        s.on_key(key(KeyCode::Enter)); // draft
+        assert_eq!(s.values[0], "tab");
+        s.on_key(key(KeyCode::Esc)); // discard + close
+        assert!(!s.show);
+        assert_eq!(s.values[0], "workspace", "esc must roll the draft back");
+        assert!(!s.dirty());
     }
 }

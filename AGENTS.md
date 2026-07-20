@@ -5,7 +5,7 @@
 The Rust TUI lives in `src/`: `main.rs` owns the event loop, while `data.rs`,
 `ui.rs`, `preview.rs`, `action.rs`, `history.rs`, `settings.rs`, and `changelog.rs`
 separate data loading, rendering, previews, accepted actions, recency state, the
-settings dashboard, and the changelog viewer. Bash entrypoints in
+in-picker settings overlay, and the changelog viewer. Bash entrypoints in
 `bin/` connect the TUI and the bash clone flow to herdr. Plugin
 metadata is defined in `herdr-plugin.toml`; sample user configuration belongs in
 `examples/`, integration checks in `tests/`, and documentation images in `docs/`.

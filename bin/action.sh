@@ -18,7 +18,6 @@ case "$ACTION_ID" in
   open-tab) entrypoint="picker"; force_target="tab" ;;
   open-split) entrypoint="picker"; force_target="split" ;;
   get) entrypoint="get" ;;
-  settings) entrypoint="settings" ;;
   changelog) entrypoint="changelog" ;;
   update-plugin) entrypoint="update-plugin" ;;
   *) die "Ghq received an unsupported action. Check plugin logs." "unknown plugin action '$ACTION_ID'" ;;
@@ -29,16 +28,11 @@ command -v ghq >/dev/null 2>&1 || die "ghq is required — brew install ghq." "g
 pane_id="$(context_pane_id)"
 cwd=""
 
-# The settings dashboard is a fixed-size form, so it opens as a session-modal popup
-# sized to its content: 19 settings + border + command bar = 22 rows, and a widest row
-# of a 22-column key, a 14-column value, and a 45-column hint = 88. Cells rather than a
-# percentage — the form does not get more readable on a 200-column monitor. Keep in step
-# with SETTINGS in src/settings.rs; a smaller window scrolls rather than clipping.
-# The picker stays a full overlay.
+# The picker is a full overlay. The changelog is a fixed-size popup — it scrolls, so
+# height is comfort rather than a fit. (Settings is not a pane: it is an in-picker
+# floating overlay, opened with ⌥, from the switcher.)
 placement=(--placement overlay)
 case "$entrypoint" in
-  settings) placement=(--placement popup --width 88 --height 22) ;;
-  # The changelog scrolls, so height is comfort rather than a fit.
   changelog) placement=(--placement popup --width 88 --height 28) ;;
 esac
 

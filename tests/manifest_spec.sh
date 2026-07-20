@@ -38,12 +38,12 @@ assert_rooted_pane_command() {
 
 assert_rooted_pane_command picker.sh
 assert_rooted_pane_command get.sh
-assert_rooted_pane_command settings.sh
 assert_rooted_pane_command changelog.sh
 assert_rooted_pane_command update-plugin.sh
 
-# Every declared action dispatches through bin/action.sh.
-for action in menu get settings changelog update-plugin open-workspace open-tab open-split; do
+# Every declared action dispatches through bin/action.sh. Settings is deliberately
+# absent: it is an in-picker overlay (⌥,), not a herdr action.
+for action in menu get changelog update-plugin open-workspace open-tab open-split; do
   grep -Fq "id = \"$action\"" "$MANIFEST" || fail "action '$action' is not declared"
 done
 

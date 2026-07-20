@@ -7,6 +7,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings is now a floating overlay inside the switcher, like the `?` cheatsheet and the
+  `⌥c` changelog.** `⌥,` (or `␣,` in Normal) draws it as a centred, rounded, two-column card
+  **over** the list — so opening settings no longer replaces the whole picker, and closing it
+  puts you back where you were. The highlighted row's hint is spelled out along the bottom.
+  A `settings` pill now sits in the command bar, and clicking it opens the same card.
+
+- **Settings changes are drafts now — nothing is written until you apply.** Cycling a value
+  stages it (a peach `●` marks each changed row and the title shows `● unsaved`); `a` applies
+  the whole draft to `config.toml` at once, and `esc` discards it. Previously every `↵` wrote
+  to disk immediately.
+
+- **Applying settings now takes effect in the running switcher**, not just on the next launch:
+  `a` re-reads the config and re-derives the live state — the list re-sorts, the source toggles
+  and label style reload, the preview and colours update, and key rebinds apply on the spot.
+
+### Removed
+
+- The standalone `ghq.settings` herdr action (and its pane) is gone: settings lives only in the
+  switcher now, the way `remove` always has. Reach it with `⌥,`, the `settings` command-bar
+  pill, or `?` → Settings.
+
 ## [0.7.0] - 2026-07-20
 
 ### Added
