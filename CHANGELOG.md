@@ -22,6 +22,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now too (`⌥,`, or `␣,` in Normal), and appears in `?`. See `examples/config.toml` for the
   action names.
 
+- **The settings dashboard is restyled to match the `?` cheatsheet** — settings are grouped
+  into sections with title-coloured headings, each value shows as a filled pill (the selected
+  one pops in the title colour, with a `▌` marker), and the list scrolls to keep the current
+  setting in view. `preview_size` is now an adjustable setting, and `preview_position` gains
+  `up` / `left`.
+
 - Both plugin actions are now reachable from the switcher itself: `⌥c` reads the
   changelog and `⌥u` updates the plugin, alongside `^u` which updates the highlighted
   _repo_. Both are listed under `?`.

@@ -37,6 +37,9 @@ enum Cycle {
 }
 
 struct Setting {
+    /// The section this setting sits under; a new value starts a new heading,
+    /// so the array's order is the display order (like the `?` cheatsheet).
+    group: &'static str,
     key: &'static str,
     default: &'static str,
     hint: &'static str,
@@ -45,117 +48,137 @@ struct Setting {
 
 const BOOL: &[&str] = &["true", "false"];
 
-/// Mirrors the `SETTINGS` array and `cycle()` cases of the fzf dashboard, in order.
+/// The settings, in display order, grouped into sections. `write_setting` is
+/// keyed by `key`, so the order here is free to read well.
 const SETTINGS: &[Setting] = &[
     Setting {
+        group: "Open",
         key: "default_target",
         default: "workspace",
         hint: "where Enter opens a repo",
         cycle: Cycle::Ring(&["workspace", "tab", "split", "pane"]),
     },
     Setting {
+        group: "Open",
         key: "split_direction",
         default: "right",
         hint: "split growth direction",
         cycle: Cycle::Ring(&["right", "down"]),
     },
     Setting {
+        group: "Open",
         key: "split_ratio",
         default: "0.5",
         hint: "split size (0.1-0.9)",
         cycle: Cycle::Prompt,
     },
     Setting {
+        group: "Open",
         key: "label",
         default: "repo",
         hint: "workspace/tab label style",
         cycle: Cycle::Ring(&["repo", "owner-repo", "path"]),
     },
     Setting {
+        group: "Sources",
         key: "include_agents",
         default: "true",
         hint: "list running agents in the switcher",
         cycle: Cycle::Ring(BOOL),
     },
     Setting {
+        group: "Sources",
         key: "include_workspaces",
         default: "true",
         hint: "list open workspaces in the switcher",
         cycle: Cycle::Ring(BOOL),
     },
     Setting {
+        group: "Sources",
         key: "sort",
         default: "recent",
         hint: "resting list order (recent/name/kind)",
         cycle: Cycle::Ring(&["recent", "name", "kind"]),
     },
     Setting {
+        group: "Keys",
         key: "keymode",
         default: "insert",
         hint: "start mode: insert (type-to-filter) or normal (Vim)",
         cycle: Cycle::Ring(&["insert", "normal"]),
     },
     Setting {
-        key: "title_color",
-        default: "peach",
-        hint: "box title colour (theme slot or #hex)",
-        cycle: Cycle::Ring(&["peach", "mauve", "teal", "blue", "accent"]),
-    },
-    Setting {
+        group: "Preview",
         key: "preview",
         default: "enabled",
         hint: "show the preview pane",
         cycle: Cycle::Ring(&["enabled", "disabled"]),
     },
     Setting {
+        group: "Preview",
         key: "preview_position",
         default: "down",
         hint: "which side the preview sits on",
         cycle: Cycle::Ring(&["right", "down", "up", "left"]),
     },
     Setting {
+        group: "Preview",
         key: "preview_size",
         default: "60%",
         hint: "preview share of the body",
         cycle: Cycle::Ring(&["40%", "50%", "60%", "70%", "80%"]),
     },
     Setting {
+        group: "Preview",
         key: "preview_readme",
         default: "true",
         hint: "include README in the preview",
         cycle: Cycle::Ring(BOOL),
     },
     Setting {
-        key: "clone_source",
-        default: "clipboard",
-        hint: "seed clone input from clipboard",
-        cycle: Cycle::Ring(&["clipboard", "prompt"]),
+        group: "Appearance",
+        key: "title_color",
+        default: "peach",
+        hint: "box title colour (theme slot or #hex)",
+        cycle: Cycle::Ring(&["peach", "mauve", "teal", "blue", "accent"]),
     },
     Setting {
-        key: "open_after_clone",
-        default: "true",
-        hint: "open a repo right after cloning",
-        cycle: Cycle::Ring(BOOL),
-    },
-    Setting {
+        group: "Appearance",
         key: "transparency",
         default: "auto",
         hint: "popup background transparency",
         cycle: Cycle::Ring(&["auto", "enabled", "disabled"]),
     },
     Setting {
+        group: "Clone",
+        key: "clone_source",
+        default: "clipboard",
+        hint: "seed clone input from clipboard",
+        cycle: Cycle::Ring(&["clipboard", "prompt"]),
+    },
+    Setting {
+        group: "Clone",
+        key: "open_after_clone",
+        default: "true",
+        hint: "open a repo right after cloning",
+        cycle: Cycle::Ring(BOOL),
+    },
+    Setting {
+        group: "Updates",
         key: "update_check",
         default: "true",
         hint: "check GitHub daily for a newer version",
         cycle: Cycle::Ring(BOOL),
     },
     Setting {
+        group: "Notifications",
         key: "notifications",
         default: "true",
         hint: "show herdr notifications",
         cycle: Cycle::Ring(BOOL),
     },
     Setting {
+        group: "Notifications",
         key: "notification_position",
         default: "top-right",
         hint: "notification corner",
@@ -311,54 +334,83 @@ impl SimpleMode for App {
 
 fn draw(f: &mut Frame, app: &App) {
     let t = &app.theme;
+    let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
     let text = t.or("text", Color::Reset);
     let sub = t.or("subtext0", Color::Gray);
     let accent = t.or("accent", Color::Cyan);
-    let surface = t.or("surface1", Color::DarkGray);
+    let title = app.title_color;
 
     // No box of our own: a popup pane already has herdr's frame and its manifest title.
-    // Drawing a second bordered box inside it doubles the title and spends two rows and
-    // two columns we do not have — the picker gets away with its boxes only because its
-    // overlay title is minimised to an icon.
+    // Drawing a second bordered box inside it doubles the title. Instead it borrows the
+    // `?` cheatsheet's language — section headings in the title colour, values as filled
+    // pills, and a `▌` marker on the selected row — so the two surfaces feel like one.
     let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
     let area = rows[0];
+    let width = area.width as usize;
 
-    // herdr clamps the popup to the terminal, so a short window must scroll rather than
-    // silently drop the last settings — the exact trap the fzf version fell into. The
-    // offset is derived from the selection, so there is no scroll state to keep in sync.
-    let visible = (area.height as usize).max(1);
-    let offset = (app.sel + 1).saturating_sub(visible);
+    // Build the whole grouped card: a heading when the group changes, then a row per
+    // setting. Remember where the selected setting landed so the window scrolls to it.
+    let name_w = 22usize; // widest key ("notification_position")
+    let pill_w = 12usize; // widest value ("bottom-right")
+    let mut lines: Vec<Line> = Vec::new();
+    let mut sel_row = 0usize;
+    let mut last_group = "";
+    for (i, s) in SETTINGS.iter().enumerate() {
+        if s.group != last_group {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled(
+                format!(" {}", s.group),
+                Style::default().fg(title).add_modifier(Modifier::BOLD),
+            )));
+            last_group = s.group;
+        }
 
-    let mut lines = Vec::with_capacity(visible);
-    for (i, s) in SETTINGS.iter().enumerate().skip(offset).take(visible) {
         let selected = i == app.sel;
-        let row_bg = if selected { surface } else { Color::Reset };
+        if selected {
+            sel_row = lines.len();
+        }
         let editing = selected && app.editing.is_some();
         let value = match &app.editing {
             Some(buf) if selected => format!("{buf}▏"),
             _ => app.values[i].clone(),
         };
+        // The selected (or editing) row's value pill uses the title colour to pop;
+        // the rest sit in a calm accent, the way the cheatsheet's key caps do.
+        let pill_bg = if selected || editing { title } else { accent };
+        let used = 2 + name_w + 1 + (pill_w + 2) + 2;
+        let hint_w = width.saturating_sub(used);
         lines.push(Line::from(vec![
             Span::styled(
-                format!(" {:<22}", s.key),
-                Style::default()
-                    .bg(row_bg)
-                    .fg(if selected { text } else { sub }),
+                if selected { "▌ " } else { "  " }.to_string(),
+                Style::default().fg(accent),
             ),
             Span::styled(
-                format!("{value:<14}"),
+                format!("{:<name_w$}", s.key),
+                Style::default().fg(if selected { text } else { sub }),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!(" {value:<pill_w$} "),
                 Style::default()
-                    .bg(row_bg)
-                    .fg(if editing { app.title_color } else { accent })
+                    .bg(pill_bg)
+                    .fg(ink)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!("{:<w$}", s.hint, w = area.width.saturating_sub(37) as usize),
-                Style::default().bg(row_bg).fg(sub),
-            ),
+            Span::raw("  "),
+            Span::styled(format!("{:<hint_w$}", s.hint), Style::default().fg(sub)),
         ]));
     }
-    f.render_widget(Paragraph::new(lines), area);
+
+    // Scroll to keep the selected row in view with a little context above it (its
+    // heading, usually), never past the last screenful.
+    let visible = (area.height as usize).max(1);
+    let max_off = lines.len().saturating_sub(visible);
+    let offset = sel_row.saturating_sub(2).min(max_off);
+    let shown: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
+
+    f.render_widget(Paragraph::new(shown), area);
     draw_bar(f, app, rows[1]);
 }
 
@@ -414,6 +466,33 @@ mod tests {
         let ring = &["workspace", "tab", "split", "pane"];
         assert_eq!(next_in(ring, "workspace"), "tab");
         assert_eq!(next_in(ring, "pane"), "workspace");
+    }
+
+    #[test]
+    fn draw_renders_grouped_rows_with_heading_value_and_hint() {
+        let app = App::new(
+            &Config::default(),
+            Theme::default(),
+            PathBuf::from("/tmp/x"),
+        );
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let screen: String = (0..24)
+            .map(|y| {
+                (0..90)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // A section heading, the first setting's value, and a hint all render.
+        assert!(screen.contains("Open"), "{screen}");
+        assert!(screen.contains("default_target"), "{screen}");
+        assert!(screen.contains("workspace"), "{screen}");
+        assert!(screen.contains("where Enter opens a repo"), "{screen}");
+        // The selected row (row 0) carries the ▌ marker.
+        assert!(screen.contains('▌'), "{screen}");
     }
 
     #[test]
