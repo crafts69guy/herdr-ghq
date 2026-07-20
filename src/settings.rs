@@ -92,8 +92,8 @@ const SETTINGS: &[Setting] = &[
     Setting {
         key: "keymode",
         default: "insert",
-        hint: "insert (type-to-filter) or modal (Vim normal mode)",
-        cycle: Cycle::Ring(&["insert", "modal"]),
+        hint: "start mode: insert (type-to-filter) or normal (Vim)",
+        cycle: Cycle::Ring(&["insert", "normal"]),
     },
     Setting {
         key: "title_color",
@@ -110,8 +110,14 @@ const SETTINGS: &[Setting] = &[
     Setting {
         key: "preview_position",
         default: "down",
-        hint: "down = full-width footer; right = side-by-side",
-        cycle: Cycle::Ring(&["down", "right"]),
+        hint: "which side the preview sits on",
+        cycle: Cycle::Ring(&["right", "down", "up", "left"]),
+    },
+    Setting {
+        key: "preview_size",
+        default: "60%",
+        hint: "preview share of the body",
+        cycle: Cycle::Ring(&["40%", "50%", "60%", "70%", "80%"]),
     },
     Setting {
         key: "preview_readme",

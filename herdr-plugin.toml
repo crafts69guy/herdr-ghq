@@ -80,7 +80,7 @@ id = "settings"
 title = "Ghq Settings"
 placement = "popup"
 width = 88
-height = 21
+height = 22
 command = ["bash", "-c", "exec bash \"$HERDR_PLUGIN_ROOT/bin/settings.sh\""]
 
 [[panes]]

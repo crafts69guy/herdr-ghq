@@ -50,7 +50,12 @@ herdr server reload-config
 
 ## Keybindings
 
-**Accept** (`enter`) is kind-aware:
+The picker works like a Telescope/LazyVim picker: it opens **typing** (Insert mode), and
+`esc` drops to **Normal** mode for Vim motions. A `NORMAL` / `INSERT` tag on the search box
+says which mode owns the keys, `?` shows the live cheatsheet for that mode, and the
+command bar re-labels itself per mode. Press `i` or `/` in Normal to type again.
+
+**Accept** (`enter`) is kind-aware in either mode:
 
 | Highlighted   | `enter`                                                                   |
 | ------------- | ------------------------------------------------------------------------- |
@@ -58,57 +63,46 @@ herdr server reload-config
 | **workspace** | switch to it (`herdr workspace focus`)                                    |
 | **repo**      | open it in `default_target` — a new workspace unless configured otherwise |
 
-**Open a repo** (or an agent's cwd) somewhere specific:
+**Insert mode** (type to filter; `esc` → Normal, `^c` closes):
 
-| Key      | Opens in…                                     |
-| -------- | --------------------------------------------- |
-| `ctrl-w` | a new **workspace**                           |
-| `ctrl-t` | a new **tab**                                 |
-| `ctrl-s` | a **split** of the current pane               |
-| `ctrl-o` | the **current pane** (`cd`)                   |
-| `ctrl-g` | a new tab, handed off to the **git-hub** menu |
+| Key                | Does                                                                     |
+| ------------------ | ------------------------------------------------------------------------ |
+| `↵` · `⌥↵`         | open · switch to the **clone** flow                                      |
+| `^j`/`^n` · `^k`/`^p` | down · up                                                             |
+| `^t` · `^v` · `^o` | open in a new **tab** · **split** · the **current pane** (`cd`)          |
+| `⌥w` · `^g` · `^r` · `^x` | to a **workspace** · **git** handoff · `ghq get -u` · **remove** |
+| `tab` / `⇧tab`     | cycle the group filter (All → Agents → Workspaces → Repos)               |
+| `⌥p` · `⌥s` · `⌥j`/`⌥k` | toggle preview · cycle sort · scroll the preview                    |
+| `^u` · `^w` · `⌫`  | clear the query · delete a word · delete a char (readline)               |
+| `⌥c` · `⌥u` · `?`  | changelog · update the plugin itself · this cheatsheet                   |
 
-**Repo actions:**
+**Normal mode** (`esc` from Insert; `i` or `/` returns): bare `h`/`j`/`k`/`l` motion is Vim's —
+`j`/`k` move, `g`/`G` top/bottom, `^d`/`^u` page, `H`/`L` prev/next group. Frequent opens sit
+on unshifted keys — `t` tab, `v` split, `o` cd, `w` workspace, `p` toggle preview — and the
+**`␣` leader** groups the rest: `␣g` git, `␣u` update repo, `␣x` remove, `␣c` clone, `␣s` sort,
+`␣l` changelog. `q` or `esc` closes. (`?` always shows the exact, current bindings.)
 
-| Key         | Does                                                 |
-| ----------- | ---------------------------------------------------- |
-| `ctrl-u`    | `ghq get -u` on the highlighted repo                 |
-| `ctrl-x`    | remove it — requires typing the repo name to confirm |
-| `alt-enter` | switch to the **clone** flow (`ghq get`)             |
-
-**Browse:**
-
-| Key                 | Does                                                                              |
-| ------------------- | --------------------------------------------------------------------------------- |
-| `tab` / `shift-tab` | cycle the group filter — All → Agents → Workspaces → Repos (empty groups skipped) |
-| `alt-s`             | cycle the sort: `recent` → `name` → `kind`                                        |
-| `alt-p`             | toggle the preview pane                                                           |
-| `alt-j` / `alt-k`   | scroll the preview without moving the selection                                   |
-| wheel               | scroll the pane under the pointer — the card over the preview, the list elsewhere |
-| click               | an entry selects it, a group tab filters, a command-bar pill runs that command    |
-| `alt-c`             | read the changelog over the list (`esc` returns to the same entry)                |
-| `alt-u`             | update the plugin itself (vs `ctrl-u`, which updates the highlighted repo)        |
-| `?`                 | toggle the keybindings cheatsheet                                                 |
+**Anywhere:** the **wheel** scrolls the pane under the pointer (card over the preview, list
+elsewhere); a **click** selects an entry, filters on a group tab, or runs a command-bar pill.
 
 Sorting defaults to `recent`, so repos you opened last float to the top; opens are recorded
 in `${XDG_STATE_HOME:-~/.local/state}/herdr-ghq/recent.tsv`. While you type, fuzzy score
 orders the list — sort only applies to the resting, no-query list.
 
-**Remapping.** Every binding above is a `chord → action` entry you can change in `config.toml`:
+**Remapping.** Every binding is a `chord → action` entry you can change in `config.toml`:
 
 ```toml
 keys.tab = "ctrl-y"              # cycle groups on ^y instead of Tab
-keys.clear_query = "ctrl-u"      # reclaim ^u for readline "clear line"
-keys.down = "ctrl-j,ctrl-n"      # one action, several chords
+keys.split = "ctrl-x"            # split on ^x instead of ^v
+keys.down = "ctrl-j,ctrl-n"     # one action, several chords
 ```
 
-A chord is a key with optional `ctrl-` / `alt-` / `shift-` prefixes. The action names are
-listed in [`examples/config.toml`](examples/config.toml).
+A chord is a key with optional `ctrl-` / `alt-` / `shift-` prefixes. The full list of action
+names is in [`examples/config.toml`](examples/config.toml), and the footer + `?` cheatsheet
+re-render from your bindings, so they always show what you actually set.
 
-**Vim mode.** Set `keymode = "modal"` for a Vim-style Normal mode: bare `hjkl` / `gg` / `G`
-navigate, `i` or `/` drop into type-to-filter Insert mode, and the open/manage verbs sit on
-unshifted keys — no modifier held. A `NORMAL` / `INSERT` tag on the search box marks the mode.
-The default, `insert`, keeps the classic type-to-filter behaviour with the chords above.
+**Start mode.** `keymode = "normal"` opens the picker in Normal mode (Vim-first) instead of
+Insert. Normal mode is always one `esc` away either way.
 
 ## Actions
 
@@ -137,7 +131,7 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | `default_target`                        | `workspace` (default) · `tab` · `split` · `pane`                            |
 | `include_agents` / `include_workspaces` | blend agents/workspaces into the list                                       |
 | `sort`                                  | `recent` (default) · `name` · `kind`                                        |
-| `keymode`                               | `insert` (default, type-to-filter) · `modal` (Vim normal mode)              |
+| `keymode`                               | start mode: `insert` (default) · `normal` (Vim-first)                       |
 | `keys.<action>`                         | rebind a key, e.g. `keys.tab = "ctrl-y"` (see below)                        |
 | `label`                                 | workspace/tab label: `repo` · `owner-repo` · `path`                         |
 | `preview` / `preview_readme`            | the preview pane                                                            |

@@ -122,14 +122,16 @@ order so the list stays stable.
   README screenshot as `Scroll whatever is`. `row` asserts, and a `TestBackend` render
   test in `main.rs` fires it.
 - **Keys are a config-driven keymap, not hardcoded `match` arms.** `handle_key` resolves a
-  `Chord` through `App::keymap` (`src/keymap.rs`) and runs `apply_action`; `keys.<action>`
-  config lines rebind, and `keymode = modal` adds a Normal mode. The default (`insert`)
-  reproduces the historical bindings exactly — a keymap test asserts this, so a change to
-  `default_insert()` that breaks parity fails. **The cheatsheet (`draw_help`) still lists the
-  Insert defaults literally**; it does _not_ reflect remapped or Normal-mode keys, so a new
-  default binding must be added there by hand (and fit `HELP_DESC`). The `NORMAL`/`INSERT` tag
-  on the search box is the only mode cue. Adding an action is one row in `keymap::NAMES` plus an
-  `apply_action` arm; a new `Accept` also needs the footer pill array and `dispatch`.
+  `Chord` through `App::keymap` (`src/keymap.rs`) and runs `apply_action`. Two ordered tables
+  (Insert + Normal) plus a `␣` leader table; `keymode` picks the start mode and `esc` toggles
+  Insert↔Normal. `keys.<action>` config lines rebind (first chord wins as the shown one).
+  **The footer (`draw_footer`) and the cheatsheet (`draw_help`) render from the keymap via
+  `Keymap::label_for(mode, action)`**, so both re-label per mode and per remap — never hardcode a
+  key cap in either; add the action to the curated list and it picks up its live chord. A row
+  whose action is unbound in the current mode drops out. `label_for` renders leader verbs as
+  `␣g`. Adding an action is one row in `keymap::NAMES`, its default chord in a table, and an
+  `apply_action` arm; a new `Accept` also needs the footer curated list and `dispatch`. Cheatsheet
+  descriptions must still fit `HELP_DESC`.
 - **The mouse is turned on by hand, and must be turned off on every exit path.** `main.rs`
   writes `?1000h`/`?1006h` itself rather than using crossterm's `EnableMouseCapture`, which
   also enables any-event tracking (`?1003h`) — every pointer move would wake the loop into

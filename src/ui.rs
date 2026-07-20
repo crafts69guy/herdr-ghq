@@ -8,7 +8,8 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragr
 use ratatui::Frame;
 
 use crate::action::Accept;
-use crate::{App, Cmd};
+use crate::keymap::{Action, Mode};
+use crate::App;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let accent = app.theme.or("accent", Color::Cyan);
@@ -160,25 +161,31 @@ fn draw_input(
         app.picker.filtered.len(),
         app.picker.entries.len()
     );
-    let mut block = boxed("Search", title, border)
-        .title(Line::from(Span::styled(count, Style::default().fg(sub))).right_aligned());
-    // In modal mode, show which mode owns the keys — a vimmer's -- INSERT --.
-    if app.keymap.modal {
-        let ink = app.theme.or("panel_bg", Color::Rgb(16, 18, 20));
-        let (tag, bg) = match app.mode {
-            crate::keymap::Mode::Normal => (" NORMAL ", accent),
-            crate::keymap::Mode::Insert => (" INSERT ", app.theme.or("green", Color::Green)),
-        };
-        block = block.title(Line::from(Span::styled(
+    // Which mode owns the keys — a vimmer's `-- INSERT --`. Normal is always one
+    // Esc away, so the tag is always shown; a pending `␣` leader appends a dot.
+    let ink = app.theme.or("panel_bg", Color::Rgb(16, 18, 20));
+    let (tag, bg) = match app.mode {
+        Mode::Normal => (
+            if app.leader_pending {
+                " NORMAL ␣ "
+            } else {
+                " NORMAL "
+            },
+            accent,
+        ),
+        Mode::Insert => (" INSERT ", app.theme.or("green", Color::Green)),
+    };
+    let block = boxed("Search", title, border)
+        .title(Line::from(Span::styled(count, Style::default().fg(sub))).right_aligned())
+        .title(Line::from(Span::styled(
             tag,
             Style::default().bg(bg).fg(ink).add_modifier(Modifier::BOLD),
         )));
-    }
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     // In Normal mode the prompt caret is dim: keys are commands, not text.
-    let prompt = if app.keymap.modal && app.mode == crate::keymap::Mode::Normal {
+    let prompt = if app.mode == Mode::Normal {
         sub
     } else {
         accent
@@ -374,75 +381,76 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     let t = &app.theme;
     // Dark ink for text sitting on the coloured pills.
     let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
-    let keys: [(&str, &str, Color, Cmd); 10] = [
+    // The bar's order, colour, and short label are fixed; the key cap is read
+    // from the keymap for the *current mode*, so a remap or an Insert↔Normal
+    // switch re-labels every pill (e.g. `git` shows `^g` in Insert, `␣g` in
+    // Normal). An action with no binding in this mode drops out of the bar.
+    let items: [(Action, &str, Color); 10] = [
         (
-            "↵",
+            Action::Accept(Accept::Default),
             "open",
             t.or("accent", Color::Cyan),
-            Cmd::Accept(Accept::Default),
         ),
         (
-            "^t",
+            Action::Accept(Accept::Tab),
             "tab",
             t.or("green", Color::Green),
-            Cmd::Accept(Accept::Tab),
         ),
         (
-            "^s",
+            Action::Accept(Accept::Split),
             "split",
             t.or("yellow", Color::Yellow),
-            Cmd::Accept(Accept::Split),
         ),
         (
-            "^o",
+            Action::Accept(Accept::Pane),
             "cd",
             t.or("blue", Color::Blue),
-            Cmd::Accept(Accept::Pane),
         ),
         (
-            "^w",
+            Action::Accept(Accept::Workspace),
             "workspace",
             t.or("mauve", Color::Magenta),
-            Cmd::Accept(Accept::Workspace),
         ),
         (
-            "^g",
+            Action::Accept(Accept::Git),
             "git",
             t.or("peach", Color::Yellow),
-            Cmd::Accept(Accept::Git),
         ),
         (
-            "^u",
+            Action::Accept(Accept::Update),
             "update",
             t.or("teal", Color::Cyan),
-            Cmd::Accept(Accept::Update),
         ),
         (
-            "^x",
+            Action::Accept(Accept::Remove),
             "remove",
             t.or("red", Color::Red),
-            Cmd::Accept(Accept::Remove),
         ),
         (
-            "⌥↵",
+            Action::Accept(Accept::Clone),
             "clone",
-            t.or("blue", Color::Magenta),
-            Cmd::Accept(Accept::Clone),
+            t.or("lavender", Color::Magenta),
         ),
-        ("?", "help", t.or("lavender", Color::White), Cmd::Help),
+        (Action::Help, "help", t.or("lavender", Color::White)),
     ];
-    // The pill is the button: its click zone is measured as it is laid out, so
-    // the two cannot disagree about where it ends. `pill_row` returns the zones;
-    // we thread each pill's [`Cmd`] back onto its zone, in order.
-    let pills: Vec<crate::tui::Pill> = keys
+    // Own the caps so the `Pill`s can borrow them for `pill_row`.
+    let shown: Vec<(String, &str, Color, Action)> = items
         .iter()
-        .map(|(key, label, color, _)| crate::tui::Pill::new(key, label, *color))
+        .filter_map(|&(action, label, color)| {
+            app.keymap
+                .label_for(app.mode, action)
+                .map(|cap| (cap, label, color, action))
+        })
+        .collect();
+    let pills: Vec<crate::tui::Pill> = shown
+        .iter()
+        .map(|(cap, label, color, _)| crate::tui::Pill::new(cap, label, *color))
         .collect();
     let (spans, zones) = crate::tui::pill_row(&pills, ink, area.x);
     app.zones.footer_zones = zones
         .into_iter()
-        .zip(keys.iter().map(|(_, _, _, cmd)| *cmd))
-        .map(|((a, b), cmd)| (a, b, cmd))
+        .zip(shown.iter().map(|(_, _, _, a)| *a))
+        .map(|((a, b), act)| (a, b, act))
         .collect();
     app.zones.footer_row = area.y;
     let pills_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
@@ -481,7 +489,9 @@ const KEY_PILL: usize = 8;
 const HELP_W: u16 = 64;
 const HELP_DESC: usize = (HELP_W as usize - 2) / 2 - 1 - (KEY_PILL + 1) - 2;
 
-/// A centred, colourful keybindings cheatsheet drawn on top of everything.
+/// A centred, colourful keybindings cheatsheet drawn on top of everything. Every
+/// key cap is read from the live keymap for the current mode, so it reflects
+/// remaps and shows the Insert or Normal bindings you are actually holding.
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let ink = t.or("panel_bg", Color::Rgb(16, 18, 20));
@@ -525,47 +535,88 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     let teal = t.or("teal", Color::Cyan);
     let red = t.or("red", Color::Red);
 
-    let left = vec![
-        head(" Navigate"),
-        row("↑ / ↓", border, "Move selection"),
-        row("^j / ^k", border, "Down / up (vim)"),
-        row("^n / ^p", border, "Down / up (emacs)"),
-        row("PgUp/Dn", border, "Jump by 10"),
-        row("Tab", teal, "Next group"),
-        row("⇧Tab", teal, "Prev group"),
-        row("type…", green, "Fuzzy filter"),
-        row("⌫", sub, "Delete a character"),
-        blank(),
-        head(" General"),
-        row("?", title, "Toggle this help"),
-        row("Esc", red, "Close / quit"),
-        row("^c", red, "Quit"),
-    ];
-    let right = vec![
-        head(" Open"),
-        row("↵", border, "Open (default)"),
-        row("⌥↵", blue, "Clone repo"),
-        row("^t", green, "Open in new tab"),
-        row("^s", yellow, "Open in split"),
-        row("^o", blue, "cd pane here"),
-        blank(),
-        head(" Manage"),
-        row("^w", mauve, "Send to workspace"),
-        row("^g", peach, "Git actions"),
-        row("^u", teal, "Update repo"),
-        row("^x", red, "Remove"),
-        blank(),
-        head(" View"),
-        row("⌥s", blue, "Cycle sort order"),
-        row("⌥p", mauve, "Toggle preview"),
-        row("⌥j / ⌥k", teal, "Scroll the preview"),
-        row("wheel", teal, "Scroll that pane"),
-        row("click", teal, "Select or run it"),
-        blank(),
-        head(" This plugin"),
-        row("⌥c", title, "What's new"),
-        row("⌥u", peach, "Update Ghq itself"),
-    ];
+    // A row for `action`, or nothing when the current mode does not bind it —
+    // so Insert hides `gg`/`G` and Normal shows the manage verbs as `␣…`.
+    let opt = |action: Action, color: Color, desc: &'static str| -> Option<Line<'static>> {
+        app.keymap
+            .label_for(app.mode, action)
+            .map(|cap| row(&cap, color, desc))
+    };
+    let extend = |col: &mut Vec<Line<'static>>, rows: Vec<Option<Line<'static>>>| {
+        col.extend(rows.into_iter().flatten());
+    };
+
+    let mut left = vec![head(" Move")];
+    extend(
+        &mut left,
+        vec![
+            opt(Action::Down, border, "Down"),
+            opt(Action::Up, border, "Up"),
+            opt(Action::Top, border, "Top"),
+            opt(Action::Bottom, border, "Bottom"),
+            opt(Action::PageDown, border, "Page down"),
+            opt(Action::PageUp, border, "Page up"),
+            opt(Action::NextGroup, teal, "Next group"),
+            opt(Action::PrevGroup, teal, "Prev group"),
+        ],
+    );
+    left.push(blank());
+    left.push(head(" Filter"));
+    extend(
+        &mut left,
+        vec![
+            opt(Action::EnterInsert, green, "Type to filter"),
+            opt(Action::ClearQuery, sub, "Clear query"),
+            opt(Action::DeleteWord, sub, "Delete word"),
+            opt(Action::Backspace, sub, "Delete a char"),
+            opt(Action::Help, title, "This help"),
+            opt(Action::Quit, red, "Close / quit"),
+        ],
+    );
+
+    let mut right = vec![head(" Open")];
+    extend(
+        &mut right,
+        vec![
+            opt(Action::Accept(Accept::Default), border, "Open"),
+            opt(Action::Accept(Accept::Clone), blue, "Clone repo"),
+            opt(Action::Accept(Accept::Tab), green, "Open in tab"),
+            opt(Action::Accept(Accept::Split), yellow, "Open in split"),
+            opt(Action::Accept(Accept::Pane), blue, "cd pane here"),
+        ],
+    );
+    right.push(blank());
+    right.push(head(" Manage"));
+    extend(
+        &mut right,
+        vec![
+            opt(Action::Accept(Accept::Workspace), mauve, "To workspace"),
+            opt(Action::Accept(Accept::Git), peach, "Git actions"),
+            opt(Action::Accept(Accept::Update), teal, "Update repo"),
+            opt(Action::Accept(Accept::Remove), red, "Remove"),
+        ],
+    );
+    right.push(blank());
+    right.push(head(" View"));
+    extend(
+        &mut right,
+        vec![
+            opt(Action::CycleSort, blue, "Cycle sort"),
+            opt(Action::TogglePreview, mauve, "Toggle preview"),
+            opt(Action::PreviewDown, teal, "Scroll preview"),
+        ],
+    );
+    right.push(row("wheel", teal, "Scroll that pane"));
+    right.push(row("click", teal, "Select or run it"));
+    right.push(blank());
+    right.push(head(" Plugin"));
+    extend(
+        &mut right,
+        vec![
+            opt(Action::Changelog, title, "What's new"),
+            opt(Action::Accept(Accept::UpdatePlugin), peach, "Update Ghq"),
+        ],
+    );
 
     // Centre a comfortably sized popup within the screen.
     let w = area.width.saturating_sub(6).clamp(40, HELP_W);
@@ -577,13 +628,17 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(Clear, popup);
 
+    let mode_name = match app.mode {
+        Mode::Insert => "INSERT",
+        Mode::Normal => "NORMAL",
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border))
         .style(Style::default().bg(ink))
         .title(Span::styled(
-            "  Keybindings ",
+            format!("  Keybindings · {mode_name} "),
             Style::default().fg(title).add_modifier(Modifier::BOLD),
         ))
         .title(

@@ -1,17 +1,16 @@
-//! The picker's keymap: a chord → action table, built from defaults and then
-//! overridden by the flat config, plus an optional Vim-style modal layer.
+//! The picker's keymap: an ordered `chord → action` table per mode, built from
+//! defaults and overridden by the flat config, with a LazyVim-flavoured modal
+//! layer and a `␣` leader for the manage verbs.
 //!
-//! Why this exists: keys used to be hardcoded `match` arms, so nothing could be
-//! remapped and a vimmer stuck with `^j`/`^k` even inside a picker whose whole
-//! job is type-to-filter. Now every binding is a [`Chord`] → [`Action`] entry a
-//! user can rebind with `keys.<action> = "..."` lines, and `keymode = modal`
-//! adds a Normal mode where bare `hjkl`/`gg`/`G` navigate and the readline
-//! chords (`^w`/`^u`) are free for editing.
+//! Shape follows a Telescope/LazyVim picker: you open **typing** (Insert), and
+//! `Esc` drops to **Normal** where bare `hjkl`/`gg`/`G` move, `i`/`/` return to
+//! Insert, the frequent opens sit on unshifted keys, and `␣` leads the rest.
+//! Insert keeps lean `^`-chords for the opens and frees `^u`/`^w` for readline.
 //!
-//! The default (`keymode = insert`) reproduces the old bindings exactly, so this
-//! is not a breaking change — it is the same picker with a table behind it.
-
-use std::collections::HashMap;
+//! Tables are ordered `Vec`s, not maps: the first chord bound to an action is the
+//! one the footer and cheatsheet show, so display is deterministic and follows
+//! the author's preference. `keys.<action> = "chord[,chord…]"` rebinds; the whole
+//! surface — footer, cheatsheet, both modes — re-renders from these tables.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -25,6 +24,21 @@ pub struct Chord {
     pub key: Key,
     pub ctrl: bool,
     pub alt: bool,
+}
+
+impl Chord {
+    /// How the chord reads in the footer and cheatsheet: `^t`, `⌥p`, `⇧⇥`, `g`, `↵`.
+    pub fn label(&self) -> String {
+        let mut s = String::new();
+        if self.ctrl {
+            s.push('^');
+        }
+        if self.alt {
+            s.push('⌥');
+        }
+        s.push_str(&key_label(self.key));
+        s
+    }
 }
 
 /// The base keys a chord can carry.
@@ -44,12 +58,30 @@ pub enum Key {
     End,
 }
 
+fn key_label(k: Key) -> String {
+    match k {
+        Key::Char(' ') => "␣".into(),
+        Key::Char(c) => c.to_string(),
+        Key::Enter => "↵".into(),
+        Key::Esc => "esc".into(),
+        Key::Tab => "⇥".into(),
+        Key::BackTab => "⇧⇥".into(),
+        Key::Backspace => "⌫".into(),
+        Key::Up => "↑".into(),
+        Key::Down => "↓".into(),
+        Key::PageUp => "PgUp".into(),
+        Key::PageDown => "PgDn".into(),
+        Key::Home => "Home".into(),
+        Key::End => "End".into(),
+    }
+}
+
 /// Which keymap is live.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Mode {
     /// Type-to-filter: printable keys land in the query.
     Insert,
-    /// Vim Normal: bare keys are commands, `i`/`/` return to Insert.
+    /// Vim Normal: bare keys are commands, `i`/`/` return to Insert, `␣` leads.
     Normal,
 }
 
@@ -80,8 +112,15 @@ pub enum Action {
     Accept(AcceptKind),
 }
 
+impl Action {
+    /// An accept returns out of the TUI; everything else stays in it.
+    pub fn is_accept(&self) -> bool {
+        matches!(self, Action::Accept(_))
+    }
+}
+
 /// The action vocabulary, paired with the config name that rebinds it. One table
-/// drives both the override lookup and the docs — a new action is one row here.
+/// drives the override lookup and the docs — a new action is one row here.
 const NAMES: &[(&str, Action)] = &[
     ("quit", Action::Quit),
     ("help", Action::Help),
@@ -114,54 +153,76 @@ const NAMES: &[(&str, Action)] = &[
     ("remove", Action::Accept(AcceptKind::Remove)),
 ];
 
-/// The chord → action tables for both modes, plus whether Normal mode exists.
+/// The ordered chord tables for both modes plus the Normal-mode `␣` leader group.
 pub struct Keymap {
-    insert: HashMap<Chord, Action>,
-    normal: HashMap<Chord, Action>,
-    /// `keymode = modal`: start in Normal, and Esc in Insert returns to Normal
-    /// rather than quitting.
-    pub modal: bool,
+    insert: Vec<(Chord, Action)>,
+    normal: Vec<(Chord, Action)>,
+    /// Reached in Normal after the leader key; holds the manage/meta verbs.
+    leader: Vec<(Chord, Action)>,
+    /// The Normal-mode leader (default `␣`).
+    pub leader_chord: Chord,
+    start: Mode,
 }
 
 impl Keymap {
     /// Build the defaults, then apply `keys.*` overrides and `keymode`.
     pub fn load(cfg: &Config) -> Self {
-        let modal = cfg.get("keymode", "insert") == "modal";
+        let start = match cfg.get("keymode", "insert").as_str() {
+            "normal" | "modal" => Mode::Normal,
+            _ => Mode::Insert,
+        };
         let mut km = Keymap {
             insert: default_insert(),
             normal: default_normal(),
-            modal,
+            leader: default_leader(),
+            leader_chord: chord(Key::Char(' ')),
+            start,
         };
         km.apply_overrides(cfg);
-        // In modal mode, Esc leaves Insert for Normal instead of quitting; Normal
-        // keeps Esc = Quit (set in `default_normal`).
-        if modal {
-            km.insert.insert(chord(Key::Esc), Action::EnterNormal);
-        }
         km
     }
 
     /// The action a chord triggers in `mode`, if any.
     pub fn action(&self, mode: Mode, ch: Chord) -> Option<Action> {
-        match mode {
-            Mode::Insert => self.insert.get(&ch),
-            Mode::Normal => self.normal.get(&ch),
-        }
-        .copied()
+        let list = match mode {
+            Mode::Insert => &self.insert,
+            Mode::Normal => &self.normal,
+        };
+        list.iter().find(|(c, _)| *c == ch).map(|(_, a)| *a)
+    }
+
+    /// The action a chord triggers after the Normal-mode leader, if any.
+    pub fn leader_action(&self, ch: Chord) -> Option<Action> {
+        self.leader.iter().find(|(c, _)| *c == ch).map(|(_, a)| *a)
     }
 
     /// The mode the picker starts in.
     pub fn start_mode(&self) -> Mode {
-        if self.modal {
-            Mode::Normal
-        } else {
-            Mode::Insert
+        self.start
+    }
+
+    /// How `action` reads in `mode`, for the footer and cheatsheet. Manage verbs
+    /// that live behind the leader in Normal render as `␣g`, `␣x`, and so on.
+    pub fn label_for(&self, mode: Mode, action: Action) -> Option<String> {
+        let list = match mode {
+            Mode::Insert => &self.insert,
+            Mode::Normal => &self.normal,
+        };
+        if let Some((c, _)) = list.iter().find(|(_, a)| *a == action) {
+            return Some(c.label());
         }
+        if mode == Mode::Normal {
+            if let Some((c, _)) = self.leader.iter().find(|(_, a)| *a == action) {
+                return Some(format!("{}{}", self.leader_chord.label(), c.label()));
+            }
+        }
+        None
     }
 
     /// Rebind actions the config names. `keys.<action> = "chord[,chord…]"` clears
-    /// that action's default chords in both maps and binds the listed ones. An
-    /// unparseable chord is skipped, so one typo cannot silently unbind an action.
+    /// that action's chords in every table and binds the listed ones (first = the
+    /// one shown). An unparseable chord is skipped, so a typo cannot silently
+    /// unbind an action.
     fn apply_overrides(&mut self, cfg: &Config) {
         for (name, act) in NAMES {
             let spec = cfg.get(&format!("keys.{name}"), "");
@@ -172,17 +233,18 @@ impl Keymap {
             if chords.is_empty() {
                 continue;
             }
-            self.insert.retain(|_, a| a != act);
-            self.normal.retain(|_, a| a != act);
-            for ch in chords {
-                self.insert.insert(ch, *act);
-                self.normal.insert(ch, *act);
+            self.insert.retain(|(_, a)| a != act);
+            self.normal.retain(|(_, a)| a != act);
+            self.leader.retain(|(_, a)| a != act);
+            // Prepend so the override wins as the displayed chord.
+            for ch in chords.into_iter().rev() {
+                self.insert.insert(0, (ch, *act));
+                self.normal.insert(0, (ch, *act));
             }
         }
     }
 }
 
-/// A modifier-free chord for `key`.
 fn chord(key: Key) -> Chord {
     Chord {
         key,
@@ -207,89 +269,98 @@ fn alt(key: Key) -> Chord {
     }
 }
 
-/// The default Insert map — the picker's historical bindings, verbatim.
-fn default_insert() -> HashMap<Chord, Action> {
+/// Insert (type-to-filter): lean `^`-chords for the opens, `⌥` for view/meta,
+/// and `^u`/`^w` left to readline. `Esc` drops to Normal; `^c` closes.
+fn default_insert() -> Vec<(Chord, Action)> {
     use Action::*;
-    let mut m = HashMap::new();
-    m.insert(chord(Key::Esc), Quit);
-    m.insert(ctrl(Key::Char('c')), Quit);
-    m.insert(chord(Key::Char('?')), Help);
-    m.insert(chord(Key::Tab), NextGroup);
-    m.insert(chord(Key::BackTab), PrevGroup);
-    m.insert(alt(Key::Char('p')), TogglePreview);
-    m.insert(alt(Key::Char('j')), PreviewDown);
-    m.insert(alt(Key::Char('k')), PreviewUp);
-    m.insert(alt(Key::Char('s')), CycleSort);
-    m.insert(alt(Key::Char('c')), Changelog);
-    m.insert(alt(Key::Char('u')), Accept(AcceptKind::UpdatePlugin));
-    m.insert(alt(Key::Enter), Accept(AcceptKind::Clone));
-    m.insert(chord(Key::Enter), Accept(AcceptKind::Default));
-    m.insert(chord(Key::Up), Up);
-    m.insert(chord(Key::Down), Down);
-    m.insert(chord(Key::PageUp), PageUp);
-    m.insert(chord(Key::PageDown), PageDown);
-    m.insert(chord(Key::Backspace), Backspace);
-    m.insert(ctrl(Key::Char('j')), Down);
-    m.insert(ctrl(Key::Char('n')), Down);
-    m.insert(ctrl(Key::Char('k')), Up);
-    m.insert(ctrl(Key::Char('p')), Up);
-    m.insert(ctrl(Key::Char('w')), Accept(AcceptKind::Workspace));
-    m.insert(ctrl(Key::Char('t')), Accept(AcceptKind::Tab));
-    m.insert(ctrl(Key::Char('s')), Accept(AcceptKind::Split));
-    m.insert(ctrl(Key::Char('o')), Accept(AcceptKind::Pane));
-    m.insert(ctrl(Key::Char('g')), Accept(AcceptKind::Git));
-    m.insert(ctrl(Key::Char('u')), Accept(AcceptKind::Update));
-    m.insert(ctrl(Key::Char('x')), Accept(AcceptKind::Remove));
-    m
+    vec![
+        (chord(Key::Enter), Accept(AcceptKind::Default)),
+        (alt(Key::Enter), Accept(AcceptKind::Clone)),
+        (ctrl(Key::Char('j')), Down),
+        (ctrl(Key::Char('n')), Down),
+        (ctrl(Key::Char('k')), Up),
+        (ctrl(Key::Char('p')), Up),
+        (chord(Key::Down), Down),
+        (chord(Key::Up), Up),
+        (chord(Key::PageDown), PageDown),
+        (chord(Key::PageUp), PageUp),
+        (chord(Key::Tab), NextGroup),
+        (chord(Key::BackTab), PrevGroup),
+        (ctrl(Key::Char('t')), Accept(AcceptKind::Tab)),
+        (ctrl(Key::Char('v')), Accept(AcceptKind::Split)),
+        (ctrl(Key::Char('o')), Accept(AcceptKind::Pane)),
+        (alt(Key::Char('w')), Accept(AcceptKind::Workspace)),
+        (ctrl(Key::Char('g')), Accept(AcceptKind::Git)),
+        (ctrl(Key::Char('r')), Accept(AcceptKind::Update)),
+        (ctrl(Key::Char('x')), Accept(AcceptKind::Remove)),
+        (alt(Key::Char('p')), TogglePreview),
+        (alt(Key::Char('j')), PreviewDown),
+        (alt(Key::Char('k')), PreviewUp),
+        (alt(Key::Char('s')), CycleSort),
+        (alt(Key::Char('c')), Changelog),
+        (alt(Key::Char('u')), Accept(AcceptKind::UpdatePlugin)),
+        (ctrl(Key::Char('u')), ClearQuery),
+        (ctrl(Key::Char('w')), DeleteWord),
+        (chord(Key::Backspace), Backspace),
+        (chord(Key::Char('?')), Help),
+        (ctrl(Key::Char('c')), Quit),
+        (chord(Key::Esc), EnterNormal),
+    ]
 }
 
-/// The default Normal map (only reached with `keymode = modal`): bare-key Vim
-/// navigation, `i`/`/` to filter, and the same accept + manage verbs on unshifted
-/// keys — so a vimmer runs the picker without holding a modifier.
-fn default_normal() -> HashMap<Chord, Action> {
+/// Normal (Vim): bare motion, unshifted opens, `i`/`/` to filter, `␣` for the
+/// rest. `q`/`Esc` close.
+fn default_normal() -> Vec<(Chord, Action)> {
     use Action::*;
-    let mut m = HashMap::new();
-    m.insert(chord(Key::Esc), Quit);
-    m.insert(chord(Key::Char('q')), Quit);
-    m.insert(ctrl(Key::Char('c')), Quit);
-    m.insert(chord(Key::Char('?')), Help);
-    // Motion.
-    m.insert(chord(Key::Char('j')), Down);
-    m.insert(chord(Key::Char('k')), Up);
-    m.insert(chord(Key::Down), Down);
-    m.insert(chord(Key::Up), Up);
-    m.insert(chord(Key::Char('g')), Top);
-    m.insert(chord(Key::Char('G')), Bottom);
-    m.insert(chord(Key::PageDown), PageDown);
-    m.insert(chord(Key::PageUp), PageUp);
-    m.insert(chord(Key::Char('d')), PageDown);
-    m.insert(chord(Key::Char('u')), PageUp);
-    // Enter Insert (filter).
-    m.insert(chord(Key::Char('i')), EnterInsert);
-    m.insert(chord(Key::Char('/')), EnterInsert);
-    // Groups + view.
-    m.insert(chord(Key::Tab), NextGroup);
-    m.insert(chord(Key::BackTab), PrevGroup);
-    m.insert(chord(Key::Char('S')), CycleSort);
-    m.insert(chord(Key::Char('p')), TogglePreview);
-    m.insert(alt(Key::Char('j')), PreviewDown);
-    m.insert(alt(Key::Char('k')), PreviewUp);
-    m.insert(chord(Key::Char('c')), Changelog);
-    // Accept + manage, unshifted.
-    m.insert(chord(Key::Enter), Accept(AcceptKind::Default));
-    m.insert(chord(Key::Char('w')), Accept(AcceptKind::Workspace));
-    m.insert(chord(Key::Char('t')), Accept(AcceptKind::Tab));
-    m.insert(chord(Key::Char('s')), Accept(AcceptKind::Split));
-    m.insert(chord(Key::Char('o')), Accept(AcceptKind::Pane));
-    m.insert(chord(Key::Char('h')), Accept(AcceptKind::Git));
-    m.insert(chord(Key::Char('x')), Accept(AcceptKind::Remove));
-    m.insert(chord(Key::Char('U')), Accept(AcceptKind::Update));
-    m
+    vec![
+        (chord(Key::Char('j')), Down),
+        (chord(Key::Char('k')), Up),
+        (chord(Key::Down), Down),
+        (chord(Key::Up), Up),
+        (chord(Key::Char('g')), Top),
+        (chord(Key::Char('G')), Bottom),
+        (ctrl(Key::Char('d')), PageDown),
+        (ctrl(Key::Char('u')), PageUp),
+        (chord(Key::PageDown), PageDown),
+        (chord(Key::PageUp), PageUp),
+        (chord(Key::Char('L')), NextGroup),
+        (chord(Key::Char('H')), PrevGroup),
+        (chord(Key::Tab), NextGroup),
+        (chord(Key::BackTab), PrevGroup),
+        (chord(Key::Char('i')), EnterInsert),
+        (chord(Key::Char('/')), EnterInsert),
+        (chord(Key::Enter), Accept(AcceptKind::Default)),
+        (chord(Key::Char('t')), Accept(AcceptKind::Tab)),
+        (chord(Key::Char('v')), Accept(AcceptKind::Split)),
+        (chord(Key::Char('o')), Accept(AcceptKind::Pane)),
+        (chord(Key::Char('w')), Accept(AcceptKind::Workspace)),
+        (chord(Key::Char('p')), TogglePreview),
+        (alt(Key::Char('j')), PreviewDown),
+        (alt(Key::Char('k')), PreviewUp),
+        (chord(Key::Char('?')), Help),
+        (chord(Key::Char('q')), Quit),
+        (chord(Key::Esc), Quit),
+    ]
+}
+
+/// The Normal-mode `␣` leader group: the manage + meta verbs, so Normal keeps
+/// its bare letters for motion and the frequent opens.
+fn default_leader() -> Vec<(Chord, Action)> {
+    use Action::*;
+    vec![
+        (chord(Key::Char('g')), Accept(AcceptKind::Git)),
+        (chord(Key::Char('u')), Accept(AcceptKind::Update)),
+        (chord(Key::Char('x')), Accept(AcceptKind::Remove)),
+        (chord(Key::Char('c')), Accept(AcceptKind::Clone)),
+        (chord(Key::Char('s')), CycleSort),
+        (chord(Key::Char('l')), Changelog),
+        (chord(Key::Char('U')), Accept(AcceptKind::UpdatePlugin)),
+    ]
 }
 
 /// Reduce a crossterm key event to a [`Chord`], or `None` for keys the picker
-/// does not model (function keys, etc.). Shift is already baked into the char,
-/// so it is not tracked separately except as [`Key::BackTab`].
+/// does not model. Shift is baked into the char, so it is not tracked except as
+/// [`Key::BackTab`].
 pub fn chord_of(k: &KeyEvent) -> Option<Chord> {
     let key = match k.code {
         KeyCode::Char(c) => Key::Char(c),
@@ -352,7 +423,6 @@ fn parse_key(name: &str, shift: bool) -> Option<Key> {
         "space" => Key::Char(' '),
         s if s.chars().count() == 1 => {
             let c = name.chars().next().unwrap();
-            // `shift-a` means the uppercase char; a bare uppercase works too.
             return Some(Key::Char(if shift { c.to_ascii_uppercase() } else { c }));
         }
         _ => return None,
@@ -374,96 +444,35 @@ mod tests {
                 alt: false
             })
         );
-        assert_eq!(
-            parse_chord("alt-p"),
-            Some(Chord {
-                key: Key::Char('p'),
-                ctrl: false,
-                alt: true
-            })
-        );
         assert_eq!(parse_chord("shift-tab"), Some(chord(Key::BackTab)));
         assert_eq!(parse_chord("enter"), Some(chord(Key::Enter)));
-        assert_eq!(parse_chord("g"), Some(chord(Key::Char('g'))));
         assert_eq!(parse_chord("space"), Some(chord(Key::Char(' '))));
         assert!(parse_chord("bogusmod-j").is_none());
         assert!(parse_chord("").is_none());
     }
 
     #[test]
-    fn defaults_reproduce_the_historical_insert_bindings() {
+    fn chord_labels_read_the_way_the_footer_shows_them() {
+        assert_eq!(ctrl(Key::Char('t')).label(), "^t");
+        assert_eq!(alt(Key::Char('p')).label(), "⌥p");
+        assert_eq!(chord(Key::Enter).label(), "↵");
+        assert_eq!(chord(Key::BackTab).label(), "⇧⇥");
+        assert_eq!(chord(Key::Char(' ')).label(), "␣");
+    }
+
+    #[test]
+    fn insert_is_the_lean_default_and_frees_readline() {
         let km = Keymap::load(&Config::default());
+        assert_eq!(km.start_mode(), Mode::Insert);
         assert_eq!(
             km.action(Mode::Insert, chord(Key::Enter)),
             Some(Action::Accept(AcceptKind::Default))
         );
         assert_eq!(
-            km.action(Mode::Insert, ctrl(Key::Char('t'))),
-            Some(Action::Accept(AcceptKind::Tab))
+            km.action(Mode::Insert, ctrl(Key::Char('v'))),
+            Some(Action::Accept(AcceptKind::Split))
         );
-        assert_eq!(
-            km.action(Mode::Insert, ctrl(Key::Char('j'))),
-            Some(Action::Down)
-        );
-        assert_eq!(
-            km.action(Mode::Insert, alt(Key::Char('p'))),
-            Some(Action::TogglePreview)
-        );
-        assert_eq!(km.action(Mode::Insert, chord(Key::Esc)), Some(Action::Quit));
-        // A plain letter is not bound — it falls through to the query.
-        assert_eq!(km.action(Mode::Insert, chord(Key::Char('j'))), None);
-        // Default keymode is insert, so the picker starts typing.
-        assert_eq!(km.start_mode(), Mode::Insert);
-    }
-
-    #[test]
-    fn modal_mode_starts_in_normal_and_reroutes_esc() {
-        let cfg = Config::from_pairs(&[("keymode", "modal")]);
-        let km = Keymap::load(&cfg);
-        assert_eq!(km.start_mode(), Mode::Normal);
-        // Bare hjkl navigate in Normal.
-        assert_eq!(
-            km.action(Mode::Normal, chord(Key::Char('j'))),
-            Some(Action::Down)
-        );
-        assert_eq!(
-            km.action(Mode::Normal, chord(Key::Char('k'))),
-            Some(Action::Up)
-        );
-        assert_eq!(
-            km.action(Mode::Normal, chord(Key::Char('i'))),
-            Some(Action::EnterInsert)
-        );
-        // Esc in Insert returns to Normal rather than quitting.
-        assert_eq!(
-            km.action(Mode::Insert, chord(Key::Esc)),
-            Some(Action::EnterNormal)
-        );
-        // Esc in Normal still quits.
-        assert_eq!(km.action(Mode::Normal, chord(Key::Esc)), Some(Action::Quit));
-    }
-
-    #[test]
-    fn a_keys_override_rebinds_an_action_in_both_maps() {
-        let cfg = Config::from_pairs(&[("keys.remove", "ctrl-d")]);
-        let km = Keymap::load(&cfg);
-        // The new chord triggers Remove…
-        assert_eq!(
-            km.action(Mode::Insert, ctrl(Key::Char('d'))),
-            Some(Action::Accept(AcceptKind::Remove))
-        );
-        // …and the old default chord for Remove is gone.
-        assert_eq!(km.action(Mode::Insert, ctrl(Key::Char('x'))), None);
-    }
-
-    #[test]
-    fn an_override_can_bind_readline_editing_over_the_action_chords() {
-        // A vimmer reclaims ^u/^w for editing without switching to modal.
-        let cfg = Config::from_pairs(&[
-            ("keys.clear_query", "ctrl-u"),
-            ("keys.delete_word", "ctrl-w"),
-        ]);
-        let km = Keymap::load(&cfg);
+        // ^u/^w are readline editing, not actions.
         assert_eq!(
             km.action(Mode::Insert, ctrl(Key::Char('u'))),
             Some(Action::ClearQuery)
@@ -471,6 +480,71 @@ mod tests {
         assert_eq!(
             km.action(Mode::Insert, ctrl(Key::Char('w'))),
             Some(Action::DeleteWord)
+        );
+        // Esc drops to Normal rather than quitting; ^c quits.
+        assert_eq!(
+            km.action(Mode::Insert, chord(Key::Esc)),
+            Some(Action::EnterNormal)
+        );
+        assert_eq!(
+            km.action(Mode::Insert, ctrl(Key::Char('c'))),
+            Some(Action::Quit)
+        );
+        // A bare letter falls through to the query.
+        assert_eq!(km.action(Mode::Insert, chord(Key::Char('t'))), None);
+    }
+
+    #[test]
+    fn normal_has_bare_motion_and_a_leader_for_manage_verbs() {
+        let km = Keymap::load(&Config::default());
+        assert_eq!(
+            km.action(Mode::Normal, chord(Key::Char('j'))),
+            Some(Action::Down)
+        );
+        assert_eq!(
+            km.action(Mode::Normal, chord(Key::Char('g'))),
+            Some(Action::Top)
+        );
+        assert_eq!(
+            km.action(Mode::Normal, chord(Key::Char('i'))),
+            Some(Action::EnterInsert)
+        );
+        assert_eq!(
+            km.action(Mode::Normal, chord(Key::Char('t'))),
+            Some(Action::Accept(AcceptKind::Tab))
+        );
+        // git lives behind the leader, not on a bare Normal key.
+        assert_eq!(
+            km.leader_action(chord(Key::Char('g'))),
+            Some(Action::Accept(AcceptKind::Git))
+        );
+        // …and its label reads as the two-key sequence.
+        assert_eq!(
+            km.label_for(Mode::Normal, Action::Accept(AcceptKind::Git))
+                .as_deref(),
+            Some("␣g")
+        );
+    }
+
+    #[test]
+    fn keymode_normal_starts_in_normal() {
+        let km = Keymap::load(&Config::from_pairs(&[("keymode", "normal")]));
+        assert_eq!(km.start_mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn an_override_rebinds_and_becomes_the_shown_chord() {
+        let km = Keymap::load(&Config::from_pairs(&[("keys.tab", "ctrl-y")]));
+        assert_eq!(
+            km.action(Mode::Insert, ctrl(Key::Char('y'))),
+            Some(Action::Accept(AcceptKind::Tab))
+        );
+        // The default ^t is gone, and the footer would now show ^y.
+        assert_eq!(km.action(Mode::Insert, ctrl(Key::Char('t'))), None);
+        assert_eq!(
+            km.label_for(Mode::Insert, Action::Accept(AcceptKind::Tab))
+                .as_deref(),
+            Some("^y")
         );
     }
 }

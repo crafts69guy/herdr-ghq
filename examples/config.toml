@@ -21,10 +21,10 @@ include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
 # Resting list order (no query). Cycle live with alt-s; Tab narrows to a group.
 sort = "recent"               # recent (latest opened) | name | kind
 
-# How keys behave: insert = type-to-filter with the classic chords (default);
-# modal = a Vim Normal mode where bare hjkl/gg/G navigate, i or / enter Insert,
-# and the accept verbs sit on unshifted keys. A NORMAL/INSERT tag marks the mode.
-keymode = "insert"            # insert | modal
+# Which mode the picker opens in. Normal mode is always one Esc away either way;
+# this only sets the start. insert = type-to-filter (default); normal = Vim-first
+# (bare hjkl/gg/G move, i or / to filter, ␣ leads the manage verbs).
+keymode = "insert"            # insert | normal
 
 # Box title colour: a [theme.custom] slot name (accent, peach, mauve, teal, …)
 # or a literal #rrggbb.
@@ -66,8 +66,8 @@ notification_position = "top-right"  # top-left | top-right | bottom-left | bott
 #   delete_word insert_mode normal_mode open clone update_plugin workspace tab
 #   split pane git update remove
 #
-# Examples (uncomment to use):
-# keys.clear_query = "ctrl-u"     # reclaim ^u for readline "clear line"
-# keys.delete_word = "ctrl-w"     # reclaim ^w for readline "delete word"
+# Insert-mode defaults already free ^u/^w for readline (clear line / delete
+# word) and put the opens on ^t (tab) / ^v (split) / ^o (cd). Examples:
 # keys.tab = "ctrl-y"             # open in a new tab on ^y instead of ^t
+# keys.split = "ctrl-x"          # split on ^x instead of ^v
 # keys.down = "ctrl-j,ctrl-n"     # multiple chords for one action

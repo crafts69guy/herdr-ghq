@@ -112,8 +112,8 @@ pub struct HitZones {
     pub list_state: ListState,
     /// The group tabs along the list's top border.
     pub tab_zones: Vec<(u16, u16, GroupFilter)>,
-    /// The command bar's pills.
-    pub footer_zones: Vec<(u16, u16, Cmd)>,
+    /// The command bar's pills, each carrying the action it runs when clicked.
+    pub footer_zones: Vec<(u16, u16, keymap::Action)>,
     /// The command bar's row — it is one row tall, so this plus a zone's `x`
     /// span is the whole hit test.
     pub footer_row: u16,
@@ -129,8 +129,11 @@ pub struct App {
     pub update: Option<String>,
     /// Chord → action table, built from defaults + `keys.*` config overrides.
     pub keymap: keymap::Keymap,
-    /// Insert (type-to-filter) or Normal (Vim, `keymode = modal` only).
+    /// Insert (type-to-filter) or Normal (Vim). Esc toggles between them.
     pub mode: keymap::Mode,
+    /// True after the Normal-mode leader (`␣`) is pressed, waiting for the next
+    /// key to select a leader action.
+    pub leader_pending: bool,
     pub picker: Picker,
     pub preview: PreviewState,
     pub changelog: ChangelogState,
@@ -141,14 +144,6 @@ enum Flow {
     Continue,
     Quit,
     Accept(Accept),
-}
-
-/// What a pill on the command bar does when clicked. Every pill but `?` stands
-/// for an [`Accept`]; `?` is the one that only opens a popup.
-#[derive(Clone, Copy)]
-pub enum Cmd {
-    Accept(Accept),
-    Help,
 }
 
 impl Picker {
@@ -406,6 +401,7 @@ impl App {
             update,
             keymap,
             mode,
+            leader_pending: false,
             picker,
             preview,
             changelog: ChangelogState::new(),
@@ -446,22 +442,19 @@ impl App {
             self.changelog.show = false;
             return Flow::Continue;
         }
-        // The command bar: one row, so the x span is the whole test.
-        if let Some(&(_, _, cmd)) = self
+        // The command bar: one row, so the x span is the whole test. A pill runs
+        // its action, the same as its key would.
+        if let Some(&(_, _, action)) = self
             .zones
             .footer_zones
             .iter()
             .find(|&&(a, b, _)| at.y == self.zones.footer_row && at.x >= a && at.x < b)
         {
-            return match cmd {
-                // Acting on nothing would be a no-op with a confirmation prompt.
-                Cmd::Accept(_) if self.picker.selected_entry().is_none() => Flow::Continue,
-                Cmd::Accept(a) => Flow::Accept(a),
-                Cmd::Help => {
-                    self.show_help = true;
-                    Flow::Continue
-                }
-            };
+            // Accepting on nothing would be a no-op with a confirmation prompt.
+            if action.is_accept() && self.picker.selected_entry().is_none() {
+                return Flow::Continue;
+            }
+            return apply_action(self, action);
         }
         // The tab strip rides the list's top border.
         if at.y == self.zones.list_area.y {
@@ -587,7 +580,10 @@ fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
             delete_word(&mut app.picker.query);
             app.picker.recompute();
         }
-        Action::EnterInsert => app.mode = keymap::Mode::Insert,
+        Action::EnterInsert => {
+            app.mode = keymap::Mode::Insert;
+            app.leader_pending = false;
+        }
         Action::EnterNormal => app.mode = keymap::Mode::Normal,
         Action::Accept(a) => return Flow::Accept(a),
     }
@@ -630,6 +626,23 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let Some(ch) = keymap::chord_of(&k) else {
         return Flow::Continue;
     };
+
+    // Normal-mode leader: `␣` arms it, the next key picks a leader action. An
+    // unbound follow-up just disarms — the leader never traps you.
+    if app.mode == keymap::Mode::Normal {
+        if app.leader_pending {
+            app.leader_pending = false;
+            if let Some(action) = app.keymap.leader_action(ch) {
+                return apply_action(app, action);
+            }
+            return Flow::Continue;
+        }
+        if ch == app.keymap.leader_chord {
+            app.leader_pending = true;
+            return Flow::Continue;
+        }
+    }
+
     if let Some(action) = app.keymap.action(app.mode, ch) {
         return apply_action(app, action);
     }
@@ -973,7 +986,7 @@ mod tests {
         let mut app = app_with_preview(60, 20);
         app.zones.list_area = Rect::new(0, 10, 40, 12);
         app.zones.footer_row = 30;
-        app.zones.footer_zones = vec![(1, 8, Cmd::Accept(Accept::Default))];
+        app.zones.footer_zones = vec![(1, 8, keymap::Action::Accept(Accept::Default))];
         app.zones.tab_zones = vec![
             (1, 6, GroupFilter::All),
             (7, 15, GroupFilter::Only(Kind::Repo)),
