@@ -779,14 +779,52 @@ fn restore_terminal() {
     ratatui::restore();
 }
 
+/// `herdr-ghq-switcher open --target T --path P --origin O --label L` — the
+/// clone flow (`bin/get.sh`) delegates here so the herdr open verbs live only in
+/// Rust rather than being mirrored in bash.
+fn cli_open(args: &[String]) -> Result<()> {
+    let (mut target, mut path, mut origin, mut label) =
+        (String::new(), String::new(), String::new(), String::new());
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let val = it.next().cloned().unwrap_or_default();
+        match flag.as_str() {
+            "--target" => target = val,
+            "--path" => path = val,
+            "--origin" => origin = val,
+            "--label" => label = val,
+            _ => {}
+        }
+    }
+    let cfg = Config::load();
+    action::open_target(&runner::SystemRunner, &target, &path, &origin, &label, &cfg)
+}
+
+/// `herdr-ghq-switcher config get KEY [DEFAULT]` — the one flat-config reader,
+/// so bash reads a setting through the same parser the TUI uses.
+fn cli_config(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("get") => {
+            let key = args.get(1).map(String::as_str).unwrap_or("");
+            let default = args.get(2).map(String::as_str).unwrap_or("");
+            println!("{}", Config::load().get(key, default));
+            Ok(())
+        }
+        _ => Err(anyhow::anyhow!("usage: config get <key> [default]")),
+    }
+}
+
 fn main() -> Result<()> {
-    // One binary, one mode per entrypoint: bin/settings.sh execs us with --settings so
-    // both dashboards share this build, the theme, and the flat config reader.
-    let mode = env::args().skip(1).find(|a| a.starts_with("--"));
-    match mode.as_deref() {
+    // One binary, many modes. bin/settings.sh execs us with --settings so both
+    // dashboards share this build; the clone flow execs `open`/`config` so the
+    // herdr verbs and the flat-config reader live only here, not mirrored in bash.
+    let args: Vec<String> = env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
         Some("--settings") => return settings::main(),
         Some("--changelog") => return changelog::main(),
         Some("--update-check") => return update::main(),
+        Some("open") => return cli_open(&args[1..]),
+        Some("config") => return cli_config(&args[1..]),
         _ => {}
     }
 

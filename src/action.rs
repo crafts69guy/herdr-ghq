@@ -128,6 +128,21 @@ fn herdr(runner: &dyn CommandRunner, args: &[&str]) -> Result<()> {
     }
 }
 
+/// The `open` subcommand's worker. `bin/get.sh` (the clone flow) calls
+/// `herdr-ghq-switcher open …` instead of re-implementing the herdr verbs in
+/// bash, so a change to how a target opens lands in exactly one place. Split
+/// geometry comes from `cfg`, the same as the picker's own opens.
+pub fn open_target(
+    runner: &dyn CommandRunner,
+    target: &str,
+    path: &str,
+    origin: &str,
+    label: &str,
+    cfg: &Config,
+) -> Result<()> {
+    open_repo(runner, target, path, origin, label, cfg)
+}
+
 fn open_repo(
     runner: &dyn CommandRunner,
     target: &str,

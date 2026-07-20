@@ -78,15 +78,23 @@ order so the list stays stable.
 
 ## Non-obvious constraints
 
-- **The bash layer duplicates the Rust layer on purpose.** `bin/lib.sh` has its own `open_repo`,
-  `focus_workspace`, `focus_agent` that mirror `src/action.rs`. The bash copies serve `get.sh`
-  (clone flow); the Rust copies serve the picker. **Behaviour changes to open targets must land in
-  both**, or the clone flow and the picker will diverge.
-- **Config parsing is intentionally flat.** Both `Config::load` (`src/data.rs`) and `toml_get`
-  (`bin/lib.sh`) are hand-rolled line parsers — one `key = value` per line, no sections, no nesting.
-  Do not add a TOML crate or nested keys without changing both parsers and the writer in
-  `src/settings.rs` (`write_setting`), which preserves comments and hand-added keys.
-  Theme parsing (`[theme.custom]` from herdr's config) is a separate hand-rolled scanner.
+- **The bash layer delegates open + config to the Rust binary; it no longer mirrors them.** The
+  clone flow (`bin/get.sh`) opens a repo with `herdr-ghq-switcher open --target … --path … --origin …
+  --label …` and reads settings with `herdr-ghq-switcher config get <key> [default]`, so the herdr
+  open verbs (`src/action.rs::open_target`) and the flat-config reader (`Config::load`) live in one
+  place. `bin/lib.sh` keeps `ensure_built` (build-on-demand, shared by the picker and clone flow),
+  `toml_get` (used only by `configure_notifications`, the pre-build notification path that must not
+  depend on a cargo build), and the pane-context/JSON helpers. The old bash `open_repo`/`focus_*`/
+  `theme_color`/`hex_rgb` are gone. **A change to how a target opens now lands only in `action.rs`.**
+- **Config parsing is intentionally flat.** `Config::load` (`src/data.rs`) is the canonical
+  hand-rolled line parser — one `key = value` per line, no sections, no nesting — and bash reads
+  settings through it via `herdr-ghq-switcher config get`. `toml_get` (`bin/lib.sh`) survives only
+  for `configure_notifications`, which runs before the binary is guaranteed built; it must stay
+  format-compatible. Do not add a TOML crate or nested keys without changing `Config::load`, the
+  writer in `src/settings.rs` (`write_setting`, which preserves comments and hand-added keys), and
+  the `toml_get` mirror. Theme parsing (`[theme.custom]` from herdr's config) is a separate
+  hand-rolled scanner in both `Theme::load` and… nowhere in bash any more (the bash `theme_color`
+  was removed with the other dead mirrors).
 - **A click zone is measured by the loop that draws the thing.** `tab_zones` and
   `footer_zones` (`src/ui.rs`) are built inside the same loops that lay out the tab strip
   and the command bar, because a zone computed separately drifts the moment a label

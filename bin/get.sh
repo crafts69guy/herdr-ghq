@@ -15,13 +15,16 @@ configure_notifications "$CONFIG_FILE" true
 
 command -v ghq >/dev/null 2>&1 || die "ghq is required — brew install ghq." "ghq not found on PATH"
 
-clone_source="$(toml_get clone_source "$CONFIG_FILE" clipboard)"
-open_after="$(toml_get open_after_clone "$CONFIG_FILE" true)"
-default_target="$(toml_get default_target "$CONFIG_FILE" workspace)"
-label_mode="$(toml_get label "$CONFIG_FILE" repo)"
-GHQ_SPLIT_DIRECTION="$(toml_get split_direction "$CONFIG_FILE" right)"
-GHQ_SPLIT_RATIO="$(toml_get split_ratio "$CONFIG_FILE" 0.5)"
-export GHQ_SPLIT_DIRECTION GHQ_SPLIT_RATIO
+# The switcher binary is the single reader of the flat config and the single
+# implementation of the open verbs — the clone flow delegates to both rather
+# than mirroring them here. `config get` reads from HERDR_PLUGIN_CONFIG_DIR.
+export HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR"
+GHQ_BIN="$(ensure_built)"
+
+clone_source="$("$GHQ_BIN" config get clone_source clipboard)"
+open_after="$("$GHQ_BIN" config get open_after_clone true)"
+default_target="$("$GHQ_BIN" config get default_target workspace)"
+label_mode="$("$GHQ_BIN" config get label repo)"
 
 ROOT="$(ghq_root)"
 [[ -n "$ROOT" ]] || die "ghq root is not configured." "ghq root returned empty"
@@ -99,7 +102,12 @@ if [[ "$open_after" == "true" ]]; then
     workspace | tab | split | pane) ;;
     *) default_target="workspace" ;;
   esac
-  open_repo "$default_target" "$newpath" "${GHQ_ORIGIN_PANE_ID:-}" "$label"
+  "$GHQ_BIN" open \
+    --target "$default_target" \
+    --path "$newpath" \
+    --origin "${GHQ_ORIGIN_PANE_ID:-}" \
+    --label "$label" ||
+    die "Ghq could not open $label after cloning." "open $default_target failed for $newpath"
 else
   notify "Cloned $label."
   printf '\n\033[2mpress any key to close\033[0m'

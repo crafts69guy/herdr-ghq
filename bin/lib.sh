@@ -26,6 +26,26 @@ herdr_bin() {
   printf '%s\n' "${HERDR_BIN_PATH:-herdr}"
 }
 
+# Build the release switcher on demand (first run only) and echo its path on
+# stdout; build progress goes to stderr so a caller can `bin="$(ensure_built)"`.
+# herdr's server env may lack the user's PATH additions, so prepend common
+# toolchain locations for the build. The picker, clone flow, and the `open` /
+# `config` delegations all route through this one binary.
+ensure_built() {
+  local root="${HERDR_PLUGIN_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
+  local bin="$root/target/release/herdr-ghq-switcher"
+  export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+  if [[ ! -x "$bin" ]]; then
+    command -v cargo >/dev/null 2>&1 ||
+      die "Rust (cargo) is required to build the switcher. Install: brew install rust." "cargo not found on PATH"
+    printf '\033[1mBuilding herdr-ghq switcher…\033[0m (first run only)\n\n' >&2
+    if ! cargo build --release --manifest-path "$root/Cargo.toml" >&2; then
+      die "Ghq could not build the switcher. Check the pane for cargo errors." "cargo build failed"
+    fi
+  fi
+  printf '%s\n' "$bin"
+}
+
 # Read a scalar from the plugin's intentionally flat config.toml. Quoted strings,
 # booleans, and bare values are supported; nested TOML is deliberately out of scope.
 toml_get() {
@@ -216,29 +236,6 @@ active_cwd() {
   printf '%s\n' "$cwd"
 }
 
-# Read one color slot from herdr's [theme.custom] (kept in sync with the user's
-# terminal theme by theme plugins such as hue-theme). Empty when the slot or
-# section is absent — callers fall back to default colors.
-theme_color() {
-  local key="$1"
-  awk -v key="$key" '
-    /^\[theme\.custom\]/ { in_section = 1; next }
-    /^\[/ { in_section = 0 }
-    in_section && $1 == key {
-      if (match($0, /"#[0-9a-fA-F]{6}"/)) {
-        print substr($0, RSTART + 1, RLENGTH - 2)
-        exit
-      }
-    }
-  ' "${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" 2>/dev/null
-}
-
-# "#rrggbb" -> "r;g;b" for ANSI truecolor escapes.
-hex_rgb() {
-  local h="${1#\#}"
-  printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
-}
-
 notify() {
   local body="$1"
   local command
@@ -298,60 +295,7 @@ repo_label() {
   esac
 }
 
-# Switch to an existing herdr workspace / agent (the unified switcher's
-# non-repo entries). Targets come straight from `herdr workspace list` /
-# `herdr agent list`, so they are trusted ids, not guessed ones.
-focus_workspace() {
-  "$(herdr_bin)" workspace focus "$1" >/dev/null ||
-    die "Ghq could not switch to that workspace." "herdr workspace focus failed for '$1'"
-}
-
-focus_agent() {
-  "$(herdr_bin)" agent focus "$1" >/dev/null ||
-    die "Ghq could not jump to that agent." "herdr agent focus failed for '$1'"
-}
-
-# Open an absolute repo path at the requested herdr target. Split and pane
-# targets act on the captured origin pane id — never a guessed one.
-#   open_repo <workspace|tab|split|pane> <abs_path> <origin_pane_id> <label>
-open_repo() {
-  local target="$1"
-  local path="$2"
-  local origin_pane="$3"
-  local label="$4"
-  local herdr
-  herdr="$(herdr_bin)"
-
-  [[ -d "$path" ]] || die "Repository path no longer exists: $path" "open_repo: '$path' is not a directory"
-
-  case "$target" in
-    workspace)
-      "$herdr" workspace create --cwd "$path" --label "$label" --focus >/dev/null ||
-        die "Ghq could not open a workspace for $label." "herdr workspace create failed for $path"
-      ;;
-    tab)
-      "$herdr" tab create --cwd "$path" --label "$label" --focus >/dev/null ||
-        die "Ghq could not open a tab for $label." "herdr tab create failed for $path"
-      ;;
-    split)
-      local dir="${GHQ_SPLIT_DIRECTION:-right}"
-      local ratio="${GHQ_SPLIT_RATIO:-0.5}"
-      local args=(pane split)
-      [[ -n "$origin_pane" ]] && args+=("$origin_pane")
-      args+=(--direction "$dir" --ratio "$ratio" --cwd "$path" --focus)
-      "$herdr" "${args[@]}" >/dev/null ||
-        die "Ghq could not split the pane for $label." "herdr pane split failed for $path"
-      ;;
-    pane)
-      [[ -n "$origin_pane" ]] ||
-        die "Ghq could not find the origin pane to cd into." "no origin pane id for 'pane' target"
-      "$herdr" pane send-text "$origin_pane" "cd '$path'" >/dev/null ||
-        die "Ghq could not send cd to the current pane." "herdr pane send-text failed for $origin_pane"
-      "$herdr" pane send-keys "$origin_pane" enter >/dev/null ||
-        die "Ghq could not submit cd in the current pane." "herdr pane send-keys enter failed for $origin_pane"
-      ;;
-    *)
-      die "Ghq received an unknown open target '$target'." "unknown open target '$target'"
-      ;;
-  esac
-}
+# Focusing a workspace/agent and opening a repo at a target now live only in the
+# Rust switcher (src/action.rs). The picker calls them directly; the clone flow
+# reaches them through `herdr-ghq-switcher open` (see ensure_built), so the herdr
+# verbs are no longer mirrored here.
