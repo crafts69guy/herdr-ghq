@@ -121,7 +121,7 @@ fn draw_changelog(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let lines = crate::changelog::render(
+    let lines = crate::markdown::render(
         &app.changelog,
         inner.width.saturating_sub(2) as usize,
         &app.theme,
@@ -412,29 +412,19 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         ("?", "help", t.or("lavender", Color::White), Cmd::Help),
     ];
-    let mut spans = vec![Span::raw(" ")];
-    // The pill is the button: its click zone is measured here, as it is laid
-    // out, so the two cannot disagree about where it ends.
-    let mut x = area.x + 1;
-    let mut zones = Vec::new();
-    for (key, label, color, cmd) in keys.iter() {
-        // Each command is a coloured pill: bold key + full label, dark ink.
-        let k = format!(" {key} ");
-        let l = format!("{label} ");
-        let w = (k.chars().count() + l.chars().count()) as u16;
-        zones.push((x, x + w, *cmd));
-        x += w + 1; // the gap span below
-        spans.push(Span::styled(
-            k,
-            Style::default()
-                .bg(*color)
-                .fg(ink)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(l, Style::default().bg(*color).fg(ink)));
-        spans.push(Span::raw(" "));
-    }
-    app.footer_zones = zones;
+    // The pill is the button: its click zone is measured as it is laid out, so
+    // the two cannot disagree about where it ends. `pill_row` returns the zones;
+    // we thread each pill's [`Cmd`] back onto its zone, in order.
+    let pills: Vec<crate::tui::Pill> = keys
+        .iter()
+        .map(|(key, label, color, _)| crate::tui::Pill::new(key, label, *color))
+        .collect();
+    let (spans, zones) = crate::tui::pill_row(&pills, ink, area.x);
+    app.footer_zones = zones
+        .into_iter()
+        .zip(keys.iter().map(|(_, _, _, cmd)| *cmd))
+        .map(|((a, b), cmd)| (a, b, cmd))
+        .collect();
     app.footer_row = area.y;
     let pills_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
     f.render_widget(Paragraph::new(Line::from(spans)), area);

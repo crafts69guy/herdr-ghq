@@ -4,10 +4,10 @@
 //! they benefit most, ephemeral agent/workspace ids simply age out.
 
 use std::collections::HashMap;
-use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::state::{now, state_file};
 
 /// Keep at most this many entries; oldest are dropped on write.
 const CAP: usize = 200;
@@ -15,23 +15,7 @@ const CAP: usize = 200;
 /// Location of the recency file: `$XDG_STATE_HOME/herdr-ghq/recent.tsv`,
 /// falling back to `~/.local/state/herdr-ghq/recent.tsv`.
 fn path() -> Option<PathBuf> {
-    let base = env::var("XDG_STATE_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".local/state"))
-        })?;
-    Some(base.join("herdr-ghq").join("recent.tsv"))
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    state_file("recent.tsv")
 }
 
 /// Load the id → last-opened-epoch map. Missing/unreadable file → empty map.

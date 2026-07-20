@@ -19,11 +19,11 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 
 use crate::data::Config;
+use crate::state::{now, state_file};
 
 const REPO: &str = "https://github.com/crafts69guy/herdr-ghq";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -45,25 +45,9 @@ fn parse_version(s: &str) -> Option<Version> {
     parts.next().is_none().then_some(v)
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 /// Beside the recency state, and for the same reason: it is cache, not configuration.
 fn cache_path() -> Option<PathBuf> {
-    let base = std::env::var("XDG_STATE_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".local/state"))
-        })?;
-    Some(base.join("herdr-ghq").join("update.tsv"))
+    state_file("update.tsv")
 }
 
 /// `checked_at<TAB>latest`, one line — the same shape and atomicity as `history.rs`.

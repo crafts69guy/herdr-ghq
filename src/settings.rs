@@ -15,10 +15,9 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -26,6 +25,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::data::{Config, Theme};
+use crate::tui::{self, Flow, Pill, SimpleMode};
 
 /// How Enter changes a setting.
 enum Cycle {
@@ -247,53 +247,54 @@ impl App {
     }
 }
 
-enum Flow {
-    Continue,
-    Quit,
-}
+impl SimpleMode for App {
+    fn draw(&mut self, f: &mut Frame) {
+        draw(f, self);
+    }
 
-fn handle_key(app: &mut App, k: event::KeyEvent) -> Flow {
-    if let Some(buf) = app.editing.as_mut() {
-        match k.code {
-            KeyCode::Esc => app.editing = None,
-            KeyCode::Enter => {
-                let v = buf.trim().to_string();
-                app.editing = None;
-                if !v.is_empty() {
-                    app.commit(v);
+    fn on_key(&mut self, k: KeyEvent) -> Flow {
+        if let Some(buf) = self.editing.as_mut() {
+            match k.code {
+                KeyCode::Esc => self.editing = None,
+                KeyCode::Enter => {
+                    let v = buf.trim().to_string();
+                    self.editing = None;
+                    if !v.is_empty() {
+                        self.commit(v);
+                    }
                 }
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) => buf.push(c),
+                _ => {}
             }
-            KeyCode::Backspace => {
-                buf.pop();
+            return Flow::Continue;
+        }
+
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') => return Flow::Quit,
+            KeyCode::Char('c') if ctrl => return Flow::Quit,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.sel = (self.sel + 1) % SETTINGS.len();
             }
-            KeyCode::Char(c) => buf.push(c),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.sel = (self.sel + SETTINGS.len() - 1) % SETTINGS.len();
+            }
+            KeyCode::Home => self.sel = 0,
+            KeyCode::End => self.sel = SETTINGS.len() - 1,
+            KeyCode::Enter => match &SETTINGS[self.sel].cycle {
+                Cycle::Ring(ring) => {
+                    let next = next_in(ring, &self.values[self.sel]);
+                    self.commit(next);
+                }
+                Cycle::Prompt => self.editing = Some(self.values[self.sel].clone()),
+            },
             _ => {}
         }
-        return Flow::Continue;
+        Flow::Continue
     }
-
-    let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-    match k.code {
-        KeyCode::Esc | KeyCode::Char('q') => return Flow::Quit,
-        KeyCode::Char('c') if ctrl => return Flow::Quit,
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.sel = (app.sel + 1) % SETTINGS.len();
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.sel = (app.sel + SETTINGS.len() - 1) % SETTINGS.len();
-        }
-        KeyCode::Home => app.sel = 0,
-        KeyCode::End => app.sel = SETTINGS.len() - 1,
-        KeyCode::Enter => match &SETTINGS[app.sel].cycle {
-            Cycle::Ring(ring) => {
-                let next = next_in(ring, &app.values[app.sel]);
-                app.commit(next);
-            }
-            Cycle::Prompt => app.editing = Some(app.values[app.sel].clone()),
-        },
-        _ => {}
-    }
-    Flow::Continue
 }
 
 fn draw(f: &mut Frame, app: &App) {
@@ -366,34 +367,20 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let keys: &[(&str, &str, Color)] = if app.editing.is_some() {
-        &[
-            ("↵", "save", t.or("accent", Color::Cyan)),
-            ("esc", "cancel", t.or("red", Color::Red)),
+    let pills: Vec<Pill> = if app.editing.is_some() {
+        vec![
+            Pill::new("↵", "save", t.or("accent", Color::Cyan)),
+            Pill::new("esc", "cancel", t.or("red", Color::Red)),
         ]
     } else {
-        &[
-            ("↵", "change", t.or("accent", Color::Cyan)),
-            ("↑ ↓", "move", t.or("blue", Color::Blue)),
-            ("esc", "done", t.or("red", Color::Red)),
+        vec![
+            Pill::new("↵", "change", t.or("accent", Color::Cyan)),
+            Pill::new("↑ ↓", "move", t.or("blue", Color::Blue)),
+            Pill::new("esc", "done", t.or("red", Color::Red)),
         ]
     };
 
-    let mut spans = vec![Span::raw(" ")];
-    for (key, label, color) in keys {
-        spans.push(Span::styled(
-            format!(" {key} "),
-            Style::default()
-                .bg(*color)
-                .fg(ink)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(
-            format!("{label} "),
-            Style::default().bg(*color).fg(ink),
-        ));
-        spans.push(Span::raw(" "));
-    }
+    let (spans, _) = tui::pill_row(&pills, ink, area.x);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -403,28 +390,7 @@ pub fn main() -> Result<()> {
     let theme = Theme::load();
     let mut app = App::new(&cfg, theme, config_path());
 
-    let mut terminal = ratatui::init();
-    let outcome = loop {
-        if let Err(e) = terminal.draw(|f| draw(f, &app)) {
-            break Err(e.into());
-        }
-        match event::poll(Duration::from_millis(200)) {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(e) => break Err(e.into()),
-        }
-        match event::read() {
-            Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => {
-                if let Flow::Quit = handle_key(&mut app, k) {
-                    break Ok(());
-                }
-            }
-            Ok(_) => {}
-            Err(e) => break Err(e.into()),
-        }
-    };
-    ratatui::restore();
-    outcome
+    tui::run_simple(&mut app)
 }
 
 #[cfg(test)]

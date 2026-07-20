@@ -532,7 +532,7 @@ fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
         // URL, and the badge markup at the top of a README is mostly URL. An
         // image is demoted to a link first, so it flattens to its alt text
         // instead of leaving the `!` behind.
-        let row = crate::changelog::flatten_links(&raw.trim_end().replace("![", "["));
+        let row = crate::markdown::flatten_links(&raw.trim_end().replace("![", "["));
         let trimmed = row.trim_start();
         let line = if let Some(head) = trimmed.strip_prefix('#') {
             Line::from(Span::styled(
@@ -544,10 +544,10 @@ fn readme_lines(body: &str, width: u16, p: &Ink) -> Vec<Line<'static>> {
             .or_else(|| trimmed.strip_prefix("* "))
         {
             let mut spans = vec![Span::styled("• ", Style::default().fg(p.accent))];
-            spans.extend(crate::changelog::spans(item, base, code));
+            spans.extend(crate::markdown::spans(item, base, code));
             Line::from(spans)
         } else {
-            Line::from(crate::changelog::spans(&row, base, code))
+            Line::from(crate::markdown::spans(&row, base, code))
         };
         out.push(clip_line(line, width as usize));
     }

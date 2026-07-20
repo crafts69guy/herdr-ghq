@@ -5,8 +5,11 @@ mod action;
 mod changelog;
 mod data;
 mod history;
+mod markdown;
 mod preview;
 mod settings;
+mod state;
+mod tui;
 mod ui;
 mod update;
 
@@ -85,7 +88,7 @@ pub struct App {
     pub update: Option<String>,
     pub show_changelog: bool,
     /// Parsed on first open, not at startup: most sessions never press ⌥c.
-    pub changelog: Vec<changelog::Block>,
+    pub changelog: Vec<markdown::Block>,
     pub changelog_scroll: u16,
     /// Rendered rows and visible rows at the last draw, so scrolling can stop.
     pub changelog_len: u16,
@@ -233,8 +236,8 @@ impl App {
     fn open_changelog(&mut self) {
         if self.changelog.is_empty() {
             self.changelog = match changelog::changelog_text() {
-                Ok(text) => changelog::parse(&text),
-                Err(e) => changelog::parse(&format!("## [unavailable]\n\n- {e}\n")),
+                Ok(text) => markdown::parse(&text),
+                Err(e) => markdown::parse(&format!("## [unavailable]\n\n- {e}\n")),
             };
         }
         self.changelog_scroll = 0;
