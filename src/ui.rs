@@ -27,10 +27,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Body: list + preview. The footer (root[2]) is always a separate full-width
     // row, so the preview can sit on any side without shrinking the command bar.
     let body = root[1];
-    let (list_area, preview_area) = if app.preview_enabled {
-        let pct = app.preview_pct;
+    let (list_area, preview_area) = if app.preview.enabled {
+        let pct = app.preview.pct;
         let rest = 100u16.saturating_sub(pct);
-        match app.preview_position.as_str() {
+        match app.preview.position.as_str() {
             "right" => {
                 let c =
                     Layout::horizontal([Constraint::Percentage(rest), Constraint::Percentage(pct)])
@@ -69,12 +69,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         // whether the pointer is inside it. A resize therefore reaches the card
         // on the next request, not this frame — the shown card keeps the width
         // it was built at until the selection moves.
-        app.preview_area = Some(area);
+        app.preview.area = Some(area);
         draw_preview(f, app, area, title, overlay);
     }
     draw_footer(f, app, root[2]);
 
-    if app.show_changelog {
+    if app.changelog.show {
         draw_changelog(f, app, f.area());
     }
     if app.show_help {
@@ -122,21 +122,17 @@ fn draw_changelog(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(block, popup);
 
     let lines = crate::markdown::render(
-        &app.changelog,
+        &app.changelog.blocks,
         inner.width.saturating_sub(2) as usize,
         &app.theme,
         title,
     );
-    app.changelog_len = lines.len() as u16;
-    app.changelog_rows = inner.height;
-    app.changelog_scroll = app
-        .changelog_scroll
-        .min(app.changelog_len.saturating_sub(app.changelog_rows));
+    let c = &mut app.changelog;
+    c.len = lines.len() as u16;
+    c.rows = inner.height;
+    c.scroll = c.scroll.min(c.len.saturating_sub(c.rows));
 
-    f.render_widget(
-        Paragraph::new(lines).scroll((app.changelog_scroll, 0)),
-        inner,
-    );
+    f.render_widget(Paragraph::new(lines).scroll((c.scroll, 0)), inner);
 }
 
 fn boxed(title: &str, accent: Color, border: Color) -> Block<'_> {
@@ -159,7 +155,11 @@ fn draw_input(
     sub: Color,
     border: Color,
 ) {
-    let count = format!(" {}/{} ", app.filtered.len(), app.entries.len());
+    let count = format!(
+        " {}/{} ",
+        app.picker.filtered.len(),
+        app.picker.entries.len()
+    );
     let block = boxed("Search", title, border)
         .title(Line::from(Span::styled(count, Style::default().fg(sub))).right_aligned());
     let inner = block.inner(area);
@@ -167,11 +167,11 @@ fn draw_input(
 
     let line = Line::from(vec![
         Span::styled("  ", Style::default().fg(accent)),
-        Span::raw(&app.query),
+        Span::raw(&app.picker.query),
     ]);
     f.render_widget(Paragraph::new(line), inner);
     // Cursor after the prompt + query.
-    let cx = inner.x + 2 + app.query.chars().count() as u16;
+    let cx = inner.x + 2 + app.picker.query.chars().count() as u16;
     f.set_cursor_position(Position::new(
         cx.min(inner.x + inner.width.saturating_sub(1)),
         inner.y,
@@ -190,10 +190,11 @@ fn draw_list(
     surface: Color,
 ) {
     let items: Vec<ListItem> = app
+        .picker
         .filtered
         .iter()
         .map(|&i| {
-            let e = &app.entries[i];
+            let e = &app.picker.entries[i];
             let mut primary = e.primary.clone();
             let width = 38usize;
             let plen = primary.chars().count();
@@ -227,8 +228,8 @@ fn draw_list(
     // Titles start one column in, past the block's corner.
     let mut x = area.x + 1;
     let mut zones = Vec::new();
-    for g in app.tabs() {
-        let style = if g == app.group {
+    for g in app.picker.tabs() {
+        let style = if g == app.picker.group {
             Style::default()
                 .fg(ink)
                 .bg(title)
@@ -243,9 +244,9 @@ fn draw_list(
         tab_spans.push(Span::styled(label, style));
         tab_spans.push(Span::raw(" "));
     }
-    app.tab_zones = zones;
+    app.zones.tab_zones = zones;
     let sort_hint = Span::styled(
-        format!(" sort: {} ", app.sort.label()),
+        format!(" sort: {} ", app.picker.sort.label()),
         Style::default().fg(border),
     );
     let block = Block::default()
@@ -269,22 +270,22 @@ fn draw_list(
     // turned back into an entry if we know which row was showing first. It also
     // means the list keeps its scroll position instead of re-deriving it from
     // the top on every frame.
-    let selected = (!app.filtered.is_empty()).then_some(app.selected);
-    app.list_state.select(selected);
-    app.list_area = area;
-    f.render_stateful_widget(list, area, &mut app.list_state);
+    let selected = (!app.picker.filtered.is_empty()).then_some(app.picker.selected);
+    app.zones.list_state.select(selected);
+    app.zones.list_area = area;
+    f.render_stateful_widget(list, area, &mut app.zones.list_state);
 }
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Color) {
     let mut block = boxed("󰈈 Preview", title, border);
     // Say so only when there is something below the fold, and say where you are
     // — an offset on a card that fits would be noise.
-    if app.preview_scroll > 0 || app.preview_len > app.preview_rows() {
+    if app.preview.scroll > 0 || app.preview.len > app.preview.rows() {
         let sub = app.theme.or("subtext0", Color::DarkGray);
-        let last = app.preview_scroll + app.preview_rows().min(app.preview_len);
+        let last = app.preview.scroll + app.preview.rows().min(app.preview.len);
         block = block.title(
             Line::from(Span::styled(
-                format!(" ⌥jk {last}/{} ", app.preview_len),
+                format!(" ⌥jk {last}/{} ", app.preview.len),
                 Style::default().fg(sub),
             ))
             .right_aligned(),
@@ -292,9 +293,9 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect, title: Color, border: Colo
     }
     // A slow render shows the placeholder rather than the previous entry's
     // preview, which would otherwise read as the current one.
-    let (body, scroll) = match app.placeholder_frame() {
+    let (body, scroll) = match app.preview.placeholder_frame() {
         Some(frame) => (placeholder(app, frame, area), 0),
-        None => (app.preview.clone(), app.preview_scroll),
+        None => (app.preview.text.clone(), app.preview.scroll),
     };
     // No `Wrap`: every body is clipped to the pane, so one card line is one row
     // and `scroll` counts what the eye counts. Wrapping would make the offset
@@ -324,7 +325,7 @@ fn placeholder(app: &App, frame: usize, area: Rect) -> Text<'static> {
         })
         .collect();
 
-    let mut label = app.preview_label.clone();
+    let mut label = app.preview.label.clone();
     if label.chars().count() > width {
         label = label.chars().take(width.saturating_sub(1)).collect();
         label.push('…');
@@ -420,12 +421,12 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|(key, label, color, _)| crate::tui::Pill::new(key, label, *color))
         .collect();
     let (spans, zones) = crate::tui::pill_row(&pills, ink, area.x);
-    app.footer_zones = zones
+    app.zones.footer_zones = zones
         .into_iter()
         .zip(keys.iter().map(|(_, _, _, cmd)| *cmd))
         .map(|((a, b), cmd)| (a, b, cmd))
         .collect();
-    app.footer_row = area.y;
+    app.zones.footer_row = area.y;
     let pills_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 
