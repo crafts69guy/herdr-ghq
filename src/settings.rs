@@ -90,6 +90,12 @@ const SETTINGS: &[Setting] = &[
         cycle: Cycle::Ring(&["recent", "name", "kind"]),
     },
     Setting {
+        key: "keymode",
+        default: "insert",
+        hint: "insert (type-to-filter) or modal (Vim normal mode)",
+        cycle: Cycle::Ring(&["insert", "modal"]),
+    },
+    Setting {
         key: "title_color",
         default: "peach",
         hint: "box title colour (theme slot or #hex)",

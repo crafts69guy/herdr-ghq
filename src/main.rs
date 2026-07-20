@@ -5,6 +5,7 @@ mod action;
 mod changelog;
 mod data;
 mod history;
+mod keymap;
 mod markdown;
 mod preview;
 mod runner;
@@ -126,6 +127,10 @@ pub struct App {
     pub show_help: bool,
     /// A newer version the cache knows about; shown, never acted on.
     pub update: Option<String>,
+    /// Chord → action table, built from defaults + `keys.*` config overrides.
+    pub keymap: keymap::Keymap,
+    /// Insert (type-to-filter) or Normal (Vim, `keymode = modal` only).
+    pub mode: keymap::Mode,
     pub picker: Picker,
     pub preview: PreviewState,
     pub changelog: ChangelogState,
@@ -390,6 +395,8 @@ impl App {
         let recent = history::load();
         let preview = PreviewState::new(&cfg, &theme, &script_dir);
         let picker = Picker::new(entries, sort, recent);
+        let keymap = keymap::Keymap::load(&cfg);
+        let mode = keymap.start_mode();
         App {
             theme,
             title_color,
@@ -397,6 +404,8 @@ impl App {
             script_dir,
             show_help: false,
             update,
+            keymap,
+            mode,
             picker,
             preview,
             changelog: ChangelogState::new(),
@@ -533,9 +542,60 @@ fn browse_order(
     idx
 }
 
+/// Delete the word before the cursor: trailing spaces, then the run of
+/// non-spaces — the readline `^w` a query editor expects.
+fn delete_word(q: &mut String) {
+    while q.ends_with(' ') {
+        q.pop();
+    }
+    while !q.is_empty() && !q.ends_with(' ') {
+        q.pop();
+    }
+}
+
+/// Run a resolved [`keymap::Action`] against the app.
+fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
+    use keymap::Action;
+    match action {
+        Action::Quit => return Flow::Quit,
+        Action::Help => app.show_help = true,
+        Action::Changelog => app.changelog.open(),
+        Action::NextGroup => app.picker.cycle_group(1),
+        Action::PrevGroup => app.picker.cycle_group(-1),
+        Action::Down => app.picker.move_sel(1),
+        Action::Up => app.picker.move_sel(-1),
+        Action::PageDown => app.picker.move_sel(10),
+        Action::PageUp => app.picker.move_sel(-10),
+        Action::Top => app.picker.selected = 0,
+        Action::Bottom => app.picker.selected = app.picker.filtered.len().saturating_sub(1),
+        Action::TogglePreview => app.preview.toggle(),
+        Action::PreviewDown => app.preview.scroll_by(1),
+        Action::PreviewUp => app.preview.scroll_by(-1),
+        Action::CycleSort => {
+            app.picker.sort = app.picker.sort.next();
+            app.picker.recompute();
+        }
+        Action::Backspace => {
+            app.picker.query.pop();
+            app.picker.recompute();
+        }
+        Action::ClearQuery => {
+            app.picker.query.clear();
+            app.picker.recompute();
+        }
+        Action::DeleteWord => {
+            delete_word(&mut app.picker.query);
+            app.picker.recompute();
+        }
+        Action::EnterInsert => app.mode = keymap::Mode::Insert,
+        Action::EnterNormal => app.mode = keymap::Mode::Normal,
+        Action::Accept(a) => return Flow::Accept(a),
+    }
+    Flow::Continue
+}
+
 fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = k.modifiers.contains(KeyModifiers::ALT);
 
     // The changelog popup scrolls, so it cannot dismiss on any key the way the help
     // cheatsheet does; esc/q closes it and the movement keys drive it.
@@ -567,98 +627,21 @@ fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
         return Flow::Continue;
     }
 
-    match k.code {
-        KeyCode::Esc => Flow::Quit,
-        // `?` (no modifiers) opens the keybindings cheatsheet.
-        KeyCode::Char('?') if !ctrl && !alt => {
-            app.show_help = true;
-            Flow::Continue
-        }
-        // Tab / Shift-Tab cycle the group filter (skipping empty groups).
-        KeyCode::Tab => {
-            app.picker.cycle_group(1);
-            Flow::Continue
-        }
-        KeyCode::BackTab => {
-            app.picker.cycle_group(-1);
-            Flow::Continue
-        }
-        // Alt-p toggles the preview pane; Alt-s cycles the sort order.
-        KeyCode::Char('p') if alt => {
-            app.preview.toggle();
-            Flow::Continue
-        }
-        // Alt-j/k scroll the preview without moving the selection, so a long
-        // README or an agent's backlog can be read from the list.
-        KeyCode::Char('j') if alt => {
-            app.preview.scroll_by(1);
-            Flow::Continue
-        }
-        KeyCode::Char('k') if alt => {
-            app.preview.scroll_by(-1);
-            Flow::Continue
-        }
-        KeyCode::Char('s') if alt => {
-            app.picker.sort = app.picker.sort.next();
-            app.picker.recompute();
-            Flow::Continue
-        }
-        // ⌥c reads the changelog without leaving the list; ⌥u updates the plugin
-        // itself, next to ^u which updates the highlighted repo.
-        KeyCode::Char('c') if alt => {
-            app.changelog.open();
-            Flow::Continue
-        }
-        KeyCode::Char('u') if alt => Flow::Accept(Accept::UpdatePlugin),
-        KeyCode::Enter if alt => Flow::Accept(Accept::Clone),
-        KeyCode::Enter => Flow::Accept(Accept::Default),
-        KeyCode::Up => {
-            app.picker.move_sel(-1);
-            Flow::Continue
-        }
-        KeyCode::Down => {
-            app.picker.move_sel(1);
-            Flow::Continue
-        }
-        KeyCode::PageUp => {
-            app.picker.move_sel(-10);
-            Flow::Continue
-        }
-        KeyCode::PageDown => {
-            app.picker.move_sel(10);
-            Flow::Continue
-        }
-        KeyCode::Backspace => {
-            app.picker.query.pop();
-            app.picker.recompute();
-            Flow::Continue
-        }
-        KeyCode::Char(c) if ctrl => match c {
-            'c' => Flow::Quit,
-            'j' | 'n' => {
-                app.picker.move_sel(1);
-                Flow::Continue
-            }
-            'k' | 'p' => {
-                app.picker.move_sel(-1);
-                Flow::Continue
-            }
-            'w' => Flow::Accept(Accept::Workspace),
-            't' => Flow::Accept(Accept::Tab),
-            's' => Flow::Accept(Accept::Split),
-            'o' => Flow::Accept(Accept::Pane),
-            'g' => Flow::Accept(Accept::Git),
-            'u' => Flow::Accept(Accept::Update),
-            'x' => Flow::Accept(Accept::Remove),
-            _ => Flow::Continue,
-        },
-        KeyCode::Char(c) if !alt => {
+    let Some(ch) = keymap::chord_of(&k) else {
+        return Flow::Continue;
+    };
+    if let Some(action) = app.keymap.action(app.mode, ch) {
+        return apply_action(app, action);
+    }
+    // Unbound: in Insert mode a plain printable key types into the query. In
+    // Normal mode an unbound key does nothing — the list is driven by commands.
+    if app.mode == keymap::Mode::Insert && !ch.ctrl && !ch.alt {
+        if let keymap::Key::Char(c) = ch.key {
             app.picker.query.push(c);
             app.picker.recompute();
-            Flow::Continue
         }
-        _ => Flow::Continue,
     }
+    Flow::Continue
 }
 
 /// Wake cadence while a preview render is in flight — short enough that the
@@ -1160,5 +1143,56 @@ mod tests {
         );
         // only the two repos, alphabetical: mid(2), zeta(0)
         assert_eq!(order, vec![2, 0]);
+    }
+
+    fn key(code: KeyCode, mods: KeyModifiers) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, mods)
+    }
+
+    #[test]
+    fn typing_a_letter_in_insert_mode_filters() {
+        let mut app = App::new(sample(), Theme::default(), Config::default(), ".".into());
+        handle_key(&mut app, key(KeyCode::Char('z'), KeyModifiers::NONE));
+        assert_eq!(app.picker.query, "z");
+    }
+
+    #[test]
+    fn ctrl_t_accepts_into_a_tab_through_the_keymap() {
+        let mut app = App::new(sample(), Theme::default(), Config::default(), ".".into());
+        let flow = handle_key(&mut app, key(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert!(matches!(flow, Flow::Accept(Accept::Tab)));
+    }
+
+    #[test]
+    fn question_mark_opens_help_rather_than_typing() {
+        let mut app = App::new(sample(), Theme::default(), Config::default(), ".".into());
+        handle_key(&mut app, key(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(app.show_help);
+        assert_eq!(app.picker.query, "", "? must not land in the query");
+    }
+
+    #[test]
+    fn modal_mode_navigates_bare_and_i_returns_to_insert() {
+        let cfg = Config::from_pairs(&[("keymode", "modal")]);
+        let mut app = App::new(sample(), Theme::default(), cfg, ".".into());
+        assert_eq!(app.mode, keymap::Mode::Normal);
+
+        // Bare `j` walks the list and does not type.
+        handle_key(&mut app, key(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.picker.selected, 1);
+        assert_eq!(app.picker.query, "");
+
+        // `i` enters Insert, where letters filter again.
+        handle_key(&mut app, key(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(app.mode, keymap::Mode::Insert);
+        handle_key(&mut app, key(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(app.picker.query, "x");
+
+        // Esc returns to Normal (modal), not quit.
+        assert!(matches!(
+            handle_key(&mut app, key(KeyCode::Esc, KeyModifiers::NONE)),
+            Flow::Continue
+        ));
+        assert_eq!(app.mode, keymap::Mode::Normal);
     }
 }

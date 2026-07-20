@@ -35,7 +35,7 @@ pub fn resolve_default_target(forced: Option<&str>, configured: &str) -> String 
 }
 
 /// Which accept key was pressed.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Accept {
     Default,
     Workspace,

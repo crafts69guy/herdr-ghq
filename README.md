@@ -94,6 +94,22 @@ Sorting defaults to `recent`, so repos you opened last float to the top; opens a
 in `${XDG_STATE_HOME:-~/.local/state}/herdr-ghq/recent.tsv`. While you type, fuzzy score
 orders the list — sort only applies to the resting, no-query list.
 
+**Remapping.** Every binding above is a `chord → action` entry you can change in `config.toml`:
+
+```toml
+keys.tab = "ctrl-y"              # cycle groups on ^y instead of Tab
+keys.clear_query = "ctrl-u"      # reclaim ^u for readline "clear line"
+keys.down = "ctrl-j,ctrl-n"      # one action, several chords
+```
+
+A chord is a key with optional `ctrl-` / `alt-` / `shift-` prefixes. The action names are
+listed in [`examples/config.toml`](examples/config.toml).
+
+**Vim mode.** Set `keymode = "modal"` for a Vim-style Normal mode: bare `hjkl` / `gg` / `G`
+navigate, `i` or `/` drop into type-to-filter Insert mode, and the open/manage verbs sit on
+unshifted keys — no modifier held. A `NORMAL` / `INSERT` tag on the search box marks the mode.
+The default, `insert`, keeps the classic type-to-filter behaviour with the chords above.
+
 ## Actions
 
 Bind any of these the same way as `ghq.menu`:
@@ -121,6 +137,8 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | `default_target`                        | `workspace` (default) · `tab` · `split` · `pane`                            |
 | `include_agents` / `include_workspaces` | blend agents/workspaces into the list                                       |
 | `sort`                                  | `recent` (default) · `name` · `kind`                                        |
+| `keymode`                               | `insert` (default, type-to-filter) · `modal` (Vim normal mode)              |
+| `keys.<action>`                         | rebind a key, e.g. `keys.tab = "ctrl-y"` (see below)                        |
 | `label`                                 | workspace/tab label: `repo` · `owner-repo` · `path`                         |
 | `preview` / `preview_readme`            | the preview pane                                                            |
 | `clone_source`                          | seed the clone prompt from the `clipboard` (default) or start blank         |

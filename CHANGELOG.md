@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Keys are remappable, and there is an optional Vim mode.** Every picker binding is now
+  a `chord → action` entry you can rebind in `config.toml` with `keys.<action> = "chord"`
+  lines (for example `keys.tab = "ctrl-y"` or `keys.clear_query = "ctrl-u"`), so a vimmer
+  can reclaim `^u`/`^w` for readline editing or move any verb to a key that suits them.
+  Set `keymode = modal` for a Vim-style **Normal mode**: bare `hjkl`/`gg`/`G` navigate,
+  `i` or `/` drop into the type-to-filter Insert mode, and the accept verbs sit on
+  unshifted keys — no modifier held. A `NORMAL` / `INSERT` tag on the search box says
+  which mode owns the keys. The default (`keymode = insert`) is exactly the old behaviour,
+  so nothing changes unless you ask for it. See `examples/config.toml` for the full list
+  of `keys.*` action names.
+
 - Both plugin actions are now reachable from the switcher itself: `⌥c` reads the
   changelog and `⌥u` updates the plugin, alongside `^u` which updates the highlighted
   _repo_. Both are listed under `?`.

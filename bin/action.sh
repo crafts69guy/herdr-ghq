@@ -30,14 +30,14 @@ pane_id="$(context_pane_id)"
 cwd=""
 
 # The settings dashboard is a fixed-size form, so it opens as a session-modal popup
-# sized to its content: 17 settings + border + command bar = 20 rows, and a widest row
+# sized to its content: 18 settings + border + command bar = 21 rows, and a widest row
 # of a 22-column key, a 14-column value, and a 45-column hint = 88. Cells rather than a
 # percentage — the form does not get more readable on a 200-column monitor. Keep in step
 # with SETTINGS in src/settings.rs; a smaller window scrolls rather than clipping.
 # The picker stays a full overlay.
 placement=(--placement overlay)
 case "$entrypoint" in
-  settings) placement=(--placement popup --width 88 --height 20) ;;
+  settings) placement=(--placement popup --width 88 --height 21) ;;
   # The changelog scrolls, so height is comfort rather than a fit.
   changelog) placement=(--placement popup --width 88 --height 28) ;;
 esac

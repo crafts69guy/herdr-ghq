@@ -53,9 +53,24 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 
 **Module split (`src/`):**
 
-- `main.rs` — `App` state, `handle_key` → `Flow` (Continue/Quit/Accept), `browse_order`
-- `data.rs` — `Theme`, `Config`, `Entry`, and `load()` which shells out to `herdr agent list`,
-  `herdr workspace list`, and `ghq list`
+- `main.rs` — `App` (a thin shell over four sub-structs: `Picker` / `PreviewState` /
+  `ChangelogState` / `HitZones`), `handle_key` → `Flow` (Continue/Quit/Accept) which resolves a
+  chord through the keymap and runs `apply_action`, and `browse_order`
+- `keymap.rs` — the `Chord → Action` tables (Insert + Normal), built from defaults and overridden
+  by `keys.*` config lines; `Mode` (Insert/Normal) and the `keymode = modal` flag. `chord_of`
+  reduces a key event; `parse_chord` reads a config spec
+- `source.rs` — the `Source` registry (kind / enabled / load) that `load_all` folds; adding a
+  source's data is a new impl + one registry line. Preview/dispatch stay per-kind matches (a cycle
+  otherwise), guarded by the compiler
+- `runner.rs` — the `CommandRunner` trait (`SystemRunner` in prod, `MockRunner` in tests) every
+  herdr/ghq/git call routes through, which is what makes the IO edge testable
+- `data.rs` — `Theme`, `Config`, `Entry`, and the per-source loaders `load_agents` /
+  `load_workspaces` / `load_repos`
+- `markdown.rs` — the changelog/README markdown (`Block`, `parse`, `render`, `spans`,
+  `flatten_links`, `wrap`), shared by `changelog`, `ui`, and `preview`
+- `state.rs` — `state_dir()` + `now()`, shared by `history` and `update`
+- `tui.rs` — the shared command-bar `pill_row` widget and `run_simple` (the settings/changelog
+  event loop; the picker keeps its own loop for the preview worker + mouse)
 - `ui.rs` — three-row layout: Search (3) / body (list + optional preview) / full-width command bar (1);
   `boxed()` is shared with the settings dashboard
 - `preview.rs` — the preview card (header + pills / meta column / captioned rules). Reads
@@ -106,6 +121,15 @@ order so the list stays stable.
   ships looking like a shorter phrase; `wheel  Scroll whatever is under it` reached a
   README screenshot as `Scroll whatever is`. `row` asserts, and a `TestBackend` render
   test in `main.rs` fires it.
+- **Keys are a config-driven keymap, not hardcoded `match` arms.** `handle_key` resolves a
+  `Chord` through `App::keymap` (`src/keymap.rs`) and runs `apply_action`; `keys.<action>`
+  config lines rebind, and `keymode = modal` adds a Normal mode. The default (`insert`)
+  reproduces the historical bindings exactly — a keymap test asserts this, so a change to
+  `default_insert()` that breaks parity fails. **The cheatsheet (`draw_help`) still lists the
+  Insert defaults literally**; it does _not_ reflect remapped or Normal-mode keys, so a new
+  default binding must be added there by hand (and fit `HELP_DESC`). The `NORMAL`/`INSERT` tag
+  on the search box is the only mode cue. Adding an action is one row in `keymap::NAMES` plus an
+  `apply_action` arm; a new `Accept` also needs the footer pill array and `dispatch`.
 - **The mouse is turned on by hand, and must be turned off on every exit path.** `main.rs`
   writes `?1000h`/`?1006h` itself rather than using crossterm's `EnableMouseCapture`, which
   also enables any-event tracking (`?1003h`) — every pointer move would wake the loop into

@@ -21,6 +21,11 @@ include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
 # Resting list order (no query). Cycle live with alt-s; Tab narrows to a group.
 sort = "recent"               # recent (latest opened) | name | kind
 
+# How keys behave: insert = type-to-filter with the classic chords (default);
+# modal = a Vim Normal mode where bare hjkl/gg/G navigate, i or / enter Insert,
+# and the accept verbs sit on unshifted keys. A NORMAL/INSERT tag marks the mode.
+keymode = "insert"            # insert | modal
+
 # Box title colour: a [theme.custom] slot name (accent, peach, mauve, teal, …)
 # or a literal #rrggbb.
 title_color = "peach"
@@ -48,3 +53,21 @@ update_check = "true"
 # herdr notifications.
 notifications = "true"
 notification_position = "top-right"  # top-left | top-right | bottom-left | bottom-right
+
+# --- Key bindings (optional) -------------------------------------------------
+# Rebind any picker action with `keys.<action> = "chord[,chord…]"`. A chord is
+# a key with optional `ctrl-` / `alt-` / `shift-` prefixes: e.g. "ctrl-y",
+# "alt-p", "shift-tab", "enter", "esc", "space", "g". Listing chords replaces the
+# action's defaults. These apply in both Insert and Normal mode.
+#
+# Action names:
+#   quit help changelog next_group prev_group down up page_down page_up top
+#   bottom toggle_preview preview_down preview_up cycle_sort clear_query
+#   delete_word insert_mode normal_mode open clone update_plugin workspace tab
+#   split pane git update remove
+#
+# Examples (uncomment to use):
+# keys.clear_query = "ctrl-u"     # reclaim ^u for readline "clear line"
+# keys.delete_word = "ctrl-w"     # reclaim ^w for readline "delete word"
+# keys.tab = "ctrl-y"             # open in a new tab on ^y instead of ^t
+# keys.down = "ctrl-j,ctrl-n"     # multiple chords for one action

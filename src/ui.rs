@@ -160,13 +160,31 @@ fn draw_input(
         app.picker.filtered.len(),
         app.picker.entries.len()
     );
-    let block = boxed("Search", title, border)
+    let mut block = boxed("Search", title, border)
         .title(Line::from(Span::styled(count, Style::default().fg(sub))).right_aligned());
+    // In modal mode, show which mode owns the keys — a vimmer's -- INSERT --.
+    if app.keymap.modal {
+        let ink = app.theme.or("panel_bg", Color::Rgb(16, 18, 20));
+        let (tag, bg) = match app.mode {
+            crate::keymap::Mode::Normal => (" NORMAL ", accent),
+            crate::keymap::Mode::Insert => (" INSERT ", app.theme.or("green", Color::Green)),
+        };
+        block = block.title(Line::from(Span::styled(
+            tag,
+            Style::default().bg(bg).fg(ink).add_modifier(Modifier::BOLD),
+        )));
+    }
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // In Normal mode the prompt caret is dim: keys are commands, not text.
+    let prompt = if app.keymap.modal && app.mode == crate::keymap::Mode::Normal {
+        sub
+    } else {
+        accent
+    };
     let line = Line::from(vec![
-        Span::styled("  ", Style::default().fg(accent)),
+        Span::styled("  ", Style::default().fg(prompt)),
         Span::raw(&app.picker.query),
     ]);
     f.render_widget(Paragraph::new(line), inner);
