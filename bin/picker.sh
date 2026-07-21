@@ -13,4 +13,8 @@ export HERDR_PLUGIN_ROOT="$PLUGIN_ROOT"
 
 BIN="$(ensure_built)"
 
+if [[ "${1:-}" == "--prepare" ]]; then
+  exit 0
+fi
+
 exec "$BIN" "$@"

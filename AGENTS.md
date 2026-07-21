@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 The Rust TUI lives in `src/`: `main.rs` owns the event loop, while `data.rs`,
-`ui.rs`, `preview.rs`, `action.rs`, `history.rs`, `settings.rs`, and `changelog.rs`
+`ui.rs`, `startup.rs`, `graphics.rs`, `preview.rs`, `action.rs`, `history.rs`, `settings.rs`, and `changelog.rs`
 separate data loading, rendering, previews, accepted actions, recency state, the
 in-picker settings overlay, and the changelog viewer. Bash entrypoints in
 `bin/` connect the TUI and the bash clone flow to herdr. Plugin
@@ -22,6 +22,8 @@ Do not commit generated `target/` artifacts.
 - `bash tests/update_guard_spec.sh` checks that the update flow refuses to install
   over anything but an unambiguous GitHub install; it stubs `herdr` via
   `HERDR_BIN_PATH` and never touches the real one.
+- `bash tests/bootstrap_spec.sh` checks release target mapping, checksum rejection,
+  and atomic installation of the prebuilt switcher.
 - `bash bin/release.sh <version>` cuts a release. It needs a terminal for its
   confirmation prompt, so an agent cannot run it — ask the maintainer to.
 - `cargo fmt --check` verifies Rust formatting.
@@ -61,7 +63,8 @@ promotes `[Unreleased]` verbatim into the GitHub release notes, and aborts if it
 empty.
 
 Releases go through `bin/release.sh`, which bumps `Cargo.toml` and `herdr-plugin.toml`
-together, dates the changelog section, and tags. Do not bump versions by hand; older
+together, dates the changelog section, and tags. The tag workflow builds four native
+binaries and publishes the release only when they all pass. Do not bump versions by hand; older
 commits ended their summary with a release tag such as `(v0.4.0)`, but the script now
 makes a dedicated `Release vX.Y.Z` commit instead.
 

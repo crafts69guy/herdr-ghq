@@ -28,25 +28,218 @@ herdr_bin() {
   printf '%s\n' "${HERDR_BIN_PATH:-herdr}"
 }
 
-# Build the release switcher on demand (first run only) and echo its path on
-# stdout; build progress goes to stderr so a caller can `bin="$(ensure_built)"`.
-# herdr's server env may lack the user's PATH additions, so prepend common
-# toolchain locations for the build. The picker, clone flow, and the `open` /
-# `config` delegations all route through this one binary.
-ensure_built() {
+# Draw the first-run bootstrap without needing the Rust binary it is preparing.
+# Output goes to stderr because callers capture ensure_built's stdout as the path.
+bootstrap_frame() {
+  local label="$1"
+  local frame="$2"
+  local eye="o.o"
+  local left_paw="_|"
+  local right_paw="|_"
+  ((frame % 4 == 1)) && left_paw="/|"
+  ((frame % 4 == 1)) && right_paw="|\\"
+  ((frame % 8 == 5)) && eye="o.-"
+
+  local cols="${COLUMNS:-80}"
+  local rows="${LINES:-24}"
+  if command -v tput >/dev/null 2>&1; then
+    cols="$(tput cols 2>/dev/null || printf '80')"
+    rows="$(tput lines 2>/dev/null || printf '24')"
+  fi
+  local pad_x=$(((cols - 32) / 2))
+  local pad_y=$(((rows - 14) / 2))
+  ((pad_x < 0)) && pad_x=0
+  ((pad_y < 0)) && pad_y=0
+  local left
+  printf -v left '%*s' "$pad_x" ''
+
+  printf '\033[2J\033[H%*s' "$pad_y" '' >&2
+  if ((cols < 40 || rows < 14)); then
+    printf '%s\033[97;1m /\\_/\\\033[0m\n' "$left" >&2
+    printf '%s\033[97m( \033[92;1m%s\033[97m )\033[0m\n' "$left" "$eye" >&2
+    printf '%s\033[97m > ^ <\033[0m\n' "$left" >&2
+  else
+    printf '%s\033[92m*   \033[97;1m/\\_____/\\\033[0m\n' "$left" >&2
+    printf '%s\033[97;1m   /         \\\033[0m\n' "$left" >&2
+    printf '%s\033[97m  |   \033[92;1m%-5s\033[97m   |\033[0m\n' "$left" "${eye//./   }" >&2
+    printf '%s\033[97m  |     ^     |\033[0m\n' "$left" >&2
+    printf '%s\033[97m   \\   ---   /\033[0m\n' "$left" >&2
+    printf '%s\033[97m    |_______|\033[0m\n' "$left" >&2
+    printf '%s\033[97m   / %s  tap tap  %s \\\033[0m\n' "$left" "$left_paw" "$right_paw" >&2
+    printf '%s\033[97m .--\033[92;1m[=]\033[97m--[ ][ ][ ]--\033[92;1m[=]\033[97m--.\033[0m\n' "$left" >&2
+    printf '%s\033[36m '\''-----------------------'\''\033[0m\n' "$left" >&2
+  fi
+  printf '\n%s\033[1m%s\033[0m\n' "$left" "$label" >&2
+  printf '%s\033[2mEsc or Ctrl-C to cancel\033[0m' "$left" >&2
+}
+
+# Run a quiet bootstrap job while the cat animates. On failure the caller can
+# show the captured log or try a fallback without build/download noise painting
+# over the same terminal cells.
+run_with_splash() {
+  local label="$1"
+  local logfile="$2"
+  shift 2
+
+  if [[ ! -t 2 || ! -r /dev/tty ]]; then
+    "$@" >"$logfile" 2>&1
+    return
+  fi
+
+  "$@" >"$logfile" 2>&1 &
+  local child=$!
+  local frame=0
+  local key=""
+  local interrupted="false"
+  trap 'interrupted="true"; kill "$child" 2>/dev/null || true' INT TERM
+  printf '\033[?25l' >&2
+
+  while kill -0 "$child" 2>/dev/null; do
+    bootstrap_frame "$label" "$frame"
+    frame=$((frame + 1))
+    key=""
+    if read -rsn1 -t 0.08 key </dev/tty 2>/dev/null && [[ "$key" == $'\033' ]]; then
+      interrupted="true"
+      kill "$child" 2>/dev/null || true
+    fi
+    [[ "$interrupted" == "true" ]] && break
+  done
+
+  local status=0
+  if wait "$child"; then
+    status=0
+  else
+    status=$?
+  fi
+  [[ "$interrupted" == "true" ]] && status=130
+  trap - INT TERM
+  printf '\033[?25h\033[2J\033[H' >&2
+  return "$status"
+}
+
+plugin_version() {
+  sed -n 's/^version = "\([^"]*\)"$/\1/p' "$1/herdr-plugin.toml" | head -n 1
+}
+
+target_for() {
+  case "$1:$2" in
+    Darwin:arm64 | Darwin:aarch64) printf 'aarch64-apple-darwin\n' ;;
+    Darwin:x86_64) printf 'x86_64-apple-darwin\n' ;;
+    Linux:arm64 | Linux:aarch64) printf 'aarch64-unknown-linux-musl\n' ;;
+    Linux:x86_64 | Linux:amd64) printf 'x86_64-unknown-linux-musl\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+host_target() {
+  target_for "$(uname -s)" "$(uname -m)"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  else
+    return 1
+  fi
+}
+
+binary_version_matches() {
+  local actual
+  actual="$("$1" --version 2>/dev/null)" || return 1
+  [[ "$actual" == "herdr-ghq-switcher $2" ]]
+}
+
+download_prebuilt() (
+  local version="$1"
+  local target="$2"
+  local output="$3"
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v tar >/dev/null 2>&1 || return 1
+
+  local asset="herdr-ghq-switcher-v${version}-${target}.tar.gz"
+  local base="${HERDR_GHQ_RELEASE_URL:-https://github.com/crafts69guy/herdr-ghq/releases/download/v${version}}"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/herdr-ghq.XXXXXX")"
+  trap 'rm -rf -- "$tmp"' EXIT
+
+  curl -fsSL "$base/$asset" -o "$tmp/$asset"
+  curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
+  local expected actual
+  expected="$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$tmp/SHA256SUMS")"
+  [[ -n "$expected" ]] || return 1
+  actual="$(sha256_file "$tmp/$asset")" || return 1
+  [[ "$actual" == "$expected" ]] || return 1
+
+  mkdir -p "$tmp/unpack" "$(dirname -- "$output")"
+  tar -xzf "$tmp/$asset" -C "$tmp/unpack"
+  [[ -f "$tmp/unpack/herdr-ghq-switcher" ]] || return 1
+  chmod 755 "$tmp/unpack/herdr-ghq-switcher"
+  binary_version_matches "$tmp/unpack/herdr-ghq-switcher" "$version" || return 1
+  cp "$tmp/unpack/herdr-ghq-switcher" "$output.tmp.$$"
+  chmod 755 "$output.tmp.$$"
+  mv -f "$output.tmp.$$" "$output"
+)
+
+# Resolve a version-matched prebuilt switcher, falling back to a local Cargo
+# build. A linked development checkout deliberately skips release downloads so
+# its binary always comes from the source the contributor is editing.
+ensure_built() (
   local root="${HERDR_PLUGIN_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
-  local bin="$root/target/release/herdr-ghq-switcher"
+  local version target="" bin log managed="true"
+  version="$(plugin_version "$root")"
+  [[ -n "$version" ]] || die "Ghq's plugin version is unreadable." "missing version in herdr-plugin.toml"
+  target="$(host_target || true)"
+  if [[ -d "$root/.git" ]]; then
+    managed="false"
+    bin="$root/target/release/herdr-ghq-switcher"
+  else
+    bin="$root/target/release/herdr-ghq-switcher-v${version}-${target:-local}"
+  fi
   export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-  if [[ ! -x "$bin" ]]; then
-    command -v cargo >/dev/null 2>&1 ||
-      die "Rust (cargo) is required to build the switcher. Install: brew install rust." "cargo not found on PATH"
-    printf '\033[1mBuilding herdr-ghq switcher…\033[0m (first run only)\n\n' >&2
-    if ! cargo build --release --manifest-path "$root/Cargo.toml" >&2; then
-      die "Ghq could not build the switcher. Check the pane for cargo errors." "cargo build failed"
+  if [[ -x "$bin" ]] && binary_version_matches "$bin" "$version"; then
+    printf '%s\n' "$bin"
+    return
+  fi
+
+  mkdir -p "$root/target/release"
+  log="$(mktemp "${TMPDIR:-/tmp}/herdr-ghq-bootstrap.XXXXXX")"
+  trap 'rm -f -- "$log"' EXIT
+
+  if [[ -n "$target" && "$managed" == "true" ]]; then
+    if run_with_splash "Fetching Ghq for ${target}…" "$log" \
+      download_prebuilt "$version" "$target" "$bin"; then
+      printf '%s\n' "$bin"
+      return
+    else
+      local download_status=$?
+      [[ "$download_status" -eq 130 ]] && return 130
     fi
   fi
+
+  command -v cargo >/dev/null 2>&1 || {
+    [[ -s "$log" ]] && sed 's/^/  /' "$log" >&2
+    die "Ghq needs a release binary or Rust (cargo). Check your network, or install Rust." "prebuilt unavailable and cargo not found"
+  }
+  if run_with_splash "Building Ghq locally…" "$log" \
+    cargo build --release --manifest-path "$root/Cargo.toml"; then
+    :
+  else
+    local build_status=$?
+    [[ "$build_status" -eq 130 ]] && return 130
+    sed 's/^/  /' "$log" >&2
+    die "Ghq could not build the switcher. Check the pane for cargo errors." "cargo build failed"
+  fi
+  binary_version_matches "$root/target/release/herdr-ghq-switcher" "$version" ||
+    die "The locally built switcher has the wrong version." "cargo output version does not match herdr-plugin.toml"
+  if [[ "$bin" != "$root/target/release/herdr-ghq-switcher" ]]; then
+    cp "$root/target/release/herdr-ghq-switcher" "$bin.tmp.$$"
+    chmod 755 "$bin.tmp.$$"
+    mv -f "$bin.tmp.$$" "$bin"
+  fi
   printf '%s\n' "$bin"
-}
+)
 
 # Guard the review viewer, then refresh its themed chrome. hunk is the read-only
 # review TUI bin/review.sh launches; it is a separate (Node) dependency, so fail

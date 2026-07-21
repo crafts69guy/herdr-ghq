@@ -23,7 +23,7 @@ fzf required.
 | ------------------------------------------------------------------------ | --------------------------------------------------- |
 | **herdr** ≥ 0.7.4                                                        | the host multiplexer                                |
 | **[`ghq`](https://github.com/x-motemen/ghq)**                            | repository source                                   |
-| **[Rust / `cargo`](https://rustup.rs)**                                  | the TUI builds on demand the first time you open it |
+| _fallback_ **[Rust / `cargo`](https://rustup.rs)**                       | only needed if a release binary cannot be downloaded |
 | _optional_ **[`hunk`](https://github.com/modem-dev/hunk)**               | the git menu's review pane (`brew install hunk`)    |
 | _optional_ **[`lazygit`](https://github.com/jesseduffield/lazygit)**     | staging/commit from the git menu                    |
 | _optional_ **[`eza`](https://github.com/eza-community/eza)**             | richer preview tree                                 |
@@ -178,7 +178,9 @@ output, in the agent's own colours; workspaces list their tabs, each with its li
 Long cards scroll with `alt-j` / `alt-k`.
 
 `update_check` only ever shows `↑ v0.6.0` in the command bar — it never installs anything.
-Set it to `false` and the plugin makes no outbound requests at all.
+Set it to `false` to disable that daily check. A managed install can still contact GitHub once
+to fetch its version-matched, checksummed switcher binary; linked development checkouts build
+their local source instead.
 
 ## How it works
 
@@ -186,14 +188,35 @@ Each action starts in `bin/action.sh`, which captures the origin pane id and cwd
 new pane steals focus, then opens that pane — an overlay for the picker and clone flow, a
 popup for the changelog.
 
-The picker itself is the Rust TUI in `src/`, built to `target/release/herdr-ghq-switcher` by
-`bin/picker.sh` on first run. It reads `herdr agent list`, `herdr workspace list`, `ghq list`,
-and Git's stable `worktree list --porcelain -z` output, fuzzy-filters with nucleo, and previews
-the selection as a card drawn in your herdr theme colours — `bin/preview.sh` supplies only the
-repo/worktree file tree. On
-accept it maps the key to a herdr CLI verb — `agent focus`, `workspace focus`,
-`workspace create`, `tab create`, `pane split`, `pane send-text` — always targeting the
+The picker itself is the Rust TUI in `src/`. On a managed install, `bin/picker.sh` selects a
+versioned macOS/Linux release binary for the host architecture and verifies its SHA-256;
+offline or linked checkouts fall back to Cargo. A small typing-cat bootstrap animates during
+that one-time preparation. The Rust TUI then claims the pane immediately and plays the
+[`cat-typing.gif`](assets/images/cat-typing.gif) artwork through Kitty graphics while a worker reads `herdr agent list`,
+`herdr workspace list`, `ghq list`, and Git's stable `worktree list --porcelain -z` output.
+Enable Herdr's graphics proxy once in `~/.config/herdr/config.toml`:
+
+```toml
+[experimental]
+kitty_graphics = true
+```
+
+The GIF is the default on a compatible Kitty/Ghostty/WezTerm pane large enough to show it.
+Otherwise — including the one-time Bash bootstrap before a binary exists — the same artwork's
+portable, theme-coloured pixel-art frames are used automatically. The image frames are embedded
+in the release binary and published through Herdr's acknowledged pane-graphics API. If Herdr
+rejects a frame, the switcher immediately redraws the pixel-art fallback rather than reserving an
+empty image slot. The frames have a transparent cutout background, so startup does not need ImageMagick
+or another decoder. The text fallback also uses the terminal's default background instead of
+painting an opaque panel, and the image is removed before picker content is drawn. Once ready the TUI fuzzy-filters with nucleo and
+previews the selection as a card drawn in your herdr theme colours — `bin/preview.sh` supplies
+only the repo/worktree file tree. On accept it maps the key to a herdr CLI verb — `agent focus`,
+`workspace focus`, `workspace create`, `tab create`, `pane split`, `pane send-text` — always targeting the
 captured origin pane or a real id from herdr, never a guessed one.
+
+The startup frame is always painted once and remains visible for at least 420 ms, even when
+source discovery finishes sooner, so the animation does not disappear during terminal setup.
+`Esc` or `Ctrl-C` still cancels immediately.
 
 The changelog viewer is the same binary in `--changelog` mode; the settings form is a
 floating overlay inside the switcher itself (`⌥,`), not a separate pane. Only the clone flow
@@ -218,13 +241,16 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 bash tests/manifest_spec.sh      # manifest contract, version sync, bash syntax
 bash tests/update_guard_spec.sh  # the update guard (herdr is stubbed, never called for real)
+bash tests/bootstrap_spec.sh     # target mapping, release checksum, atomic install
 ```
 
-CI runs exactly those five. Two things are easy to miss:
+CI runs those checks on every change. Tagged releases additionally build four native binaries
+(macOS/Linux, arm64/x86_64) and publish them only after every target succeeds. Two things are
+easy to miss:
 
 - **Any user-visible change adds a line to `CHANGELOG.md`'s `[Unreleased]` section in the
-  same commit** — `bin/release.sh` promotes that section verbatim into the GitHub release
-  notes and nothing is generated from `git log`, so an entry not written there is lost.
+  same commit** — `bin/release.sh` promotes that section and the release workflow publishes it
+  verbatim as the GitHub release notes; nothing is generated from `git log`.
 - **Don't bump versions by hand.** `Cargo.toml` and `herdr-plugin.toml` must match, and
   `bin/release.sh` bumps both.
 

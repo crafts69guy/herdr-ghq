@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # Cut a release: verify, bump both version files, promote the changelog's
-# [Unreleased] section, tag, push, and open the GitHub release from that section.
+# [Unreleased] section, tag, and push. The tag-triggered Release workflow builds
+# all supported binaries, checksums them, and publishes the GitHub release from
+# that same changelog section only after every target succeeds.
 #
 #   bash bin/release.sh 0.5.0
 #
@@ -37,8 +39,6 @@ today="$(date +%F)"
 # Everything that can reject the release runs before a single file is touched, so
 # a rejected release leaves the tree exactly as it was found.
 
-command -v gh >/dev/null || fail "gh is required to create the GitHub release"
-
 # The publish step asks for confirmation, and `read` cannot ask anything without a
 # terminal — it would hit EOF and, under `set -e`, kill the script silently right
 # after the bump. Refuse now, while the tree is still untouched.
@@ -70,6 +70,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 bash tests/manifest_spec.sh
 bash tests/update_guard_spec.sh
+bash tests/bootstrap_spec.sh
 
 # --- bump --------------------------------------------------------------------
 
@@ -150,6 +151,4 @@ git tag -a "$tag" -m "$tag"
 git push origin "$branch"
 git push origin "$tag"
 
-printf '%s\n' "$notes" | gh release create "$tag" --title "$tag" --notes-file -
-
-log "published $tag"
+log "pushed $tag; the Release workflow will publish it after all four binaries pass"

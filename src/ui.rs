@@ -18,6 +18,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let overlay = app.theme.or("overlay0", Color::DarkGray);
     let surface = app.theme.or("surface1", Color::Indexed(236));
 
+    if let Some(startup) = &app.startup {
+        crate::startup::draw(
+            f,
+            f.area(),
+            &app.theme,
+            app.title_color,
+            startup,
+            app.startup_graphics,
+        );
+        return;
+    }
+
     let root = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(5),

@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An animated **typing cat now appears as soon as the switcher opens**: compatible
+  Kitty/Ghostty/WezTerm panes use the embedded `cat-typing.gif` frames when Herdr's experimental
+  Kitty graphics proxy is enabled, while small or unsupported panes automatically keep the
+  theme-coloured pixel-art fallback. Both paths preserve the terminal's transparent background;
+  the image is cleaned up before picker content appears and
+  its first frame is always shown for a 420 ms minimum, making 2–3 animation steps visible even
+  when loading finishes immediately. Agents, workspaces, repositories, and linked worktrees
+  load in the background. Inside Herdr, frames use its acknowledged pane-graphics API so a
+  rejected image immediately reveals the pixel-art fallback instead of leaving an empty splash;
+  direct terminal launches retain standard Kitty commands. Managed
+  installs fetch a checksummed native binary for macOS/Linux on arm64/x86_64, so first open no
+  longer waits on Cargo; offline and linked checkouts still fall back to a local build, with
+  the same cat keeping the pane responsive. `esc` or `ctrl-c` cancels either loading stage.
 - A **Worktrees** tab now lists linked Git worktrees across every ghq repository without
   duplicating the main checkout already shown under Repos. Worktrees open in a workspace,
   tab, split, or pane and use the built-in Git menu at their own path; repo-only update and

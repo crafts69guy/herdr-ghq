@@ -66,22 +66,13 @@ if ! "$(herdr_bin)" plugin install "$REPO" --yes; then
   die "Ghq could not be updated. Check the pane for details." "herdr plugin install $REPO failed"
 fi
 
-# The binary is gitignored, so re-fetching the source leaves the old one in place and
-# picker.sh only builds when it is missing — without this, the update would land the new
-# code and keep running the old switcher.
+# Prepare the versioned release binary while this update pane is already open. The
+# newly installed picker owns download/checksum/fallback policy; invoking its
+# prepare-only mode avoids duplicating that contract here.
 root="$(plugin_field plugin_root || true)"
 if [[ -n "$root" && -f "$root/Cargo.toml" ]]; then
-  printf '\n\033[1mRebuilding the switcher\033[0m\n\n'
-  export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-  if command -v cargo >/dev/null 2>&1; then
-    rm -f -- "$root/target/release/herdr-ghq-switcher"
-    if ! cargo build --release --manifest-path "$root/Cargo.toml"; then
-      log "cargo build failed; the next switcher open will retry"
-    fi
-  else
-    # picker.sh builds on demand and reports this properly on the next open.
-    rm -f -- "$root/target/release/herdr-ghq-switcher"
-    log "cargo not found; the switcher will build on its next open"
+  if ! HERDR_PLUGIN_ROOT="$root" bash "$root/bin/picker.sh" --prepare; then
+    log "binary preparation failed; the next switcher open will retry"
   fi
 fi
 

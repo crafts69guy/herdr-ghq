@@ -5,6 +5,7 @@ mod action;
 mod changelog;
 mod data;
 mod git;
+mod graphics;
 mod history;
 mod hunk;
 mod keymap;
@@ -13,6 +14,7 @@ mod preview;
 mod runner;
 mod settings;
 mod source;
+mod startup;
 mod state;
 mod tui;
 mod ui;
@@ -145,6 +147,14 @@ pub struct App {
     /// The git menu, drawn as a floating overlay when `git.show`.
     pub git: git::Git,
     pub zones: HitZones,
+    /// Present only while the source commands run before the first picker frame.
+    pub startup: Option<startup::State>,
+    /// True for the frame whose cat is rendered by Kitty graphics instead of
+    /// terminal text. Set by the event loop after checking the current pane.
+    pub startup_graphics: bool,
+    startup_ready: bool,
+    startup_empty: bool,
+    startup_failed: bool,
 }
 
 enum Flow {
@@ -428,6 +438,50 @@ impl App {
             settings,
             git: git::Git::new(),
             zones: HitZones::new(),
+            startup: None,
+            startup_graphics: false,
+            startup_ready: false,
+            startup_empty: false,
+            startup_failed: false,
+        }
+    }
+
+    fn new_loading(theme: Theme, cfg: Config, script_dir: String) -> Self {
+        let loader = startup::State::spawn(cfg.clone(), theme.clone());
+        let mut app = Self::new(Vec::new(), theme, cfg, script_dir);
+        app.startup = Some(loader);
+        app
+    }
+
+    /// Install a completed startup result without rebuilding the rest of App's
+    /// already-loaded config/theme state. An empty result preserves the old
+    /// behavior of handing the terminal to the clone flow.
+    fn absorb_startup(&mut self) -> bool {
+        let poll = match self.startup.as_mut() {
+            Some(state) => state.poll(),
+            None => return false,
+        };
+        match poll {
+            startup::Poll::Pending => false,
+            startup::Poll::Changed => true,
+            startup::Poll::Failed => {
+                self.startup = None;
+                self.startup_failed = true;
+                true
+            }
+            startup::Poll::Ready(entries) => {
+                self.startup = None;
+                if entries.is_empty() {
+                    self.startup_empty = true;
+                    return true;
+                }
+                let sort = SortMode::parse(&self.cfg.get("sort", "recent"));
+                let mut picker = Picker::new(entries, sort, history::load());
+                picker.select_group_or_all(GroupFilter::parse(&self.cfg.get("default_tab", "all")));
+                self.picker = picker;
+                self.startup_ready = true;
+                true
+            }
         }
     }
 
@@ -860,8 +914,9 @@ const PLACEHOLDER_FRAME: Duration = Duration::from_millis(80);
 /// next placeholder frame.
 fn wait_for_work(app: &mut App) -> Result<()> {
     let entered_on = app.preview.placeholder_frame();
+    let startup_frame = app.startup.as_ref().map(startup::State::frame);
     loop {
-        let tick = if app.preview.pending() {
+        let tick = if app.startup.is_some() || app.preview.pending() {
             PREVIEW_TICK
         } else {
             IDLE_TICK
@@ -870,6 +925,12 @@ fn wait_for_work(app: &mut App) -> Result<()> {
             return Ok(()); // a key is waiting: it takes priority
         }
         if app.preview.absorb() {
+            return Ok(());
+        }
+        if app.absorb_startup() {
+            return Ok(());
+        }
+        if app.startup.as_ref().map(startup::State::frame) != startup_frame {
             return Ok(());
         }
         // Redraw on a frame change only — polling at 16ms must not drag the
@@ -884,11 +945,49 @@ fn run(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
 ) -> Result<Option<(Option<Entry>, Accept)>> {
+    let mut splash = graphics::Splash::new();
     loop {
+        // A fast source set may finish before the terminal's first draw. Absorb
+        // it now so the animation has no artificial minimum frame or flash.
+        app.absorb_startup();
+        if app.startup_failed {
+            return Err(anyhow::anyhow!("startup data worker stopped unexpectedly"));
+        }
+        if app.startup_empty {
+            return Ok(None);
+        }
+        if app.startup_ready {
+            app.startup_ready = false;
+            // `prefix+g` launches with this set: wait until entries exist, then
+            // open the menu for the origin pane before the first picker frame.
+            if env::var("GHQ_OPEN_GIT").is_ok_and(|v| !v.is_empty()) {
+                open_git(app, true);
+            }
+        }
+        if app.startup.is_none() {
+            // Kitty images live outside the text cell grid. Remove the splash
+            // before drawing picker cells so it can never cover real content.
+            splash.clear();
+        }
+        if let Some(startup) = app.startup.as_mut() {
+            // A completed worker stays pending until this first display begins;
+            // terminal initialization therefore cannot consume the splash.
+            startup.begin_display();
+        }
+        let startup_frame = app.startup.as_ref().map(startup::State::frame).unwrap_or(0);
+        let size = terminal.size()?;
+        let area = Rect::new(0, 0, size.width, size.height);
+        app.startup_graphics = app.startup.is_some() && splash.can_show(area);
         // Draw first: it publishes the preview pane's width, which the request
         // below needs to clip the card to. The first pass draws an empty pane
         // for one frame, which is what the placeholder is for anyway.
         terminal.draw(|f| ui::draw(f, app))?;
+        if app.startup_graphics && !splash.show(area, startup_frame) {
+            // A broken proxy/terminal write is a visual enhancement failure,
+            // not a picker failure. Replace the empty image slot immediately.
+            app.startup_graphics = false;
+            terminal.draw(|f| ui::draw(f, app))?;
+        }
         app.request_preview();
         wait_for_work(app)?;
         if !event::poll(Duration::ZERO)? {
@@ -896,6 +995,9 @@ fn run(
         }
         match event::read()? {
             Event::Mouse(m) => {
+                if app.startup.is_some() {
+                    continue;
+                }
                 let at = Position::new(m.column, m.row);
                 match m.kind {
                     MouseEventKind::ScrollDown => {
@@ -918,6 +1020,14 @@ fn run(
             }
             Event::Key(k) => {
                 if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if app.startup.is_some() {
+                    let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(k.code, KeyCode::Char('c'));
+                    if matches!(k.code, KeyCode::Esc) || ctrl_c {
+                        return Ok(None);
+                    }
                     continue;
                 }
                 match handle_key(app, k) {
@@ -1006,6 +1116,10 @@ fn main() -> Result<()> {
     // is not a mode: it is an in-picker overlay (see settings::Settings).
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("--version") => {
+            println!("herdr-ghq-switcher {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
         Some("--changelog") => return changelog::main(),
         Some("--update-check") => return update::main(),
         Some("hunk-theme") => return hunk::main(),
@@ -1017,7 +1131,6 @@ fn main() -> Result<()> {
     let runner = runner::SystemRunner;
     let cfg = Config::load();
     let theme = Theme::load();
-    let root = data::ghq_root(&runner);
     let script_dir = env::var("HERDR_PLUGIN_ROOT")
         .map(|r| format!("{r}/bin"))
         .unwrap_or_else(|_| ".".into());
@@ -1027,31 +1140,18 @@ fn main() -> Result<()> {
     // enables shows up on a later launch. Nothing below waits on it.
     update::spawn_refresh_if_stale(&cfg);
 
-    let ctx = source::LoadCtx {
-        runner: &runner,
-        theme: &theme,
-        root: &root,
-    };
-    let entries = source::load_all(&cfg, &ctx);
-    if entries.is_empty() {
-        // Nothing to switch to yet — hand off to the clone flow.
+    let mut app = App::new_loading(theme, cfg, script_dir.clone());
+    let mut terminal = init_terminal();
+    let outcome = run(&mut terminal, &mut app);
+    restore_terminal();
+
+    if app.startup_empty {
+        // Nothing to switch to yet — preserve the existing handoff to clone.
         let err = Command::new("bash")
             .arg(format!("{script_dir}/get.sh"))
             .exec();
         return Err(err.into());
     }
-
-    // `root` is not carried into the App: repo entries already hold their absolute
-    // `dir`, which is the only thing the preview and the actions ever needed it for.
-    let mut app = App::new(entries, theme, cfg, script_dir.clone());
-    // `prefix+g` (the `ghq.git` action) launches us with this set: open straight into
-    // the git overlay for the origin pane's repo, skipping the switcher list.
-    if env::var("GHQ_OPEN_GIT").is_ok_and(|v| !v.is_empty()) {
-        open_git(&mut app, true);
-    }
-    let mut terminal = init_terminal();
-    let outcome = run(&mut terminal, &mut app);
-    restore_terminal();
 
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
@@ -1234,6 +1334,82 @@ mod tests {
         let screen = rendered(&mut app, 120, 40);
         assert!(screen.contains("Scroll that pane"), "{screen}");
         assert!(screen.contains("Select or run it"), "{screen}");
+    }
+
+    #[test]
+    fn startup_draws_the_cat_instead_of_the_empty_picker() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::waiting("Checking linked worktrees"));
+        let screen = rendered(&mut app, 80, 24);
+        assert!(screen.contains("/\\_____/\\"), "{screen}");
+        assert!(screen.contains("Checking linked worktrees"), "{screen}");
+        assert!(screen.contains("Esc or Ctrl-C to cancel"), "{screen}");
+        assert!(!screen.contains("Search"), "{screen}");
+    }
+
+    #[test]
+    fn compact_startup_still_shows_status_and_cancel_hint() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::waiting("Indexing repositories"));
+        let screen = rendered(&mut app, 34, 10);
+        assert!(screen.contains("( o.o )"), "{screen}");
+        assert!(screen.contains("Indexing repositories"), "{screen}");
+    }
+
+    #[test]
+    fn graphics_startup_reserves_the_cat_area_and_keeps_status_in_text() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::waiting("Finding running agents"));
+        app.startup_graphics = true;
+        let screen = rendered(&mut app, 80, 24);
+        assert!(!screen.contains("/\\_____/\\"), "{screen}");
+        assert!(screen.contains("Finding running agents"), "{screen}");
+        assert!(screen.contains("Esc or Ctrl-C to cancel"), "{screen}");
+    }
+
+    #[test]
+    fn startup_preserves_the_terminals_default_background() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::waiting("Loading"));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        assert!(terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .all(|cell| cell.bg == Color::Reset));
+    }
+
+    #[test]
+    fn completed_startup_installs_entries_and_default_tab() {
+        let cfg = Config::from_pairs(&[("default_tab", "repos")]);
+        let mut app = App::new(Vec::new(), Theme::default(), cfg, ".".into());
+        app.startup = Some(startup::State::ready(sample()));
+        assert!(app.absorb_startup());
+        assert!(app.startup.is_none());
+        assert!(app.startup_ready);
+        assert_eq!(app.picker.entries.len(), 4);
+        assert_eq!(app.picker.group, GroupFilter::Only(Kind::Repo));
+    }
+
+    #[test]
+    fn empty_startup_requests_the_clone_handoff() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::ready(Vec::new()));
+        assert!(app.absorb_startup());
+        assert!(app.startup_empty);
+        assert!(!app.startup_ready);
+    }
+
+    #[test]
+    fn disconnected_startup_worker_surfaces_a_failure() {
+        let mut app = App::new(Vec::new(), Theme::default(), Config::default(), ".".into());
+        app.startup = Some(startup::State::waiting("Loading"));
+        assert!(app.absorb_startup());
+        assert!(app.startup_failed);
+        assert!(!app.startup_empty);
     }
 
     #[test]

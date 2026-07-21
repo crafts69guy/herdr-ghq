@@ -44,10 +44,13 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
    passes them forward as
    `GHQ_ORIGIN_PANE_ID` / `GHQ_ORIGIN_CWD` on `herdr plugin pane open`. The `git` action reuses the
    `picker` pane with `GHQ_OPEN_GIT=1`, which opens the switcher straight into the git overlay.
-2. `bin/picker.sh` builds `target/release/herdr-ghq-switcher` on demand (first run only) and
-   `exec`s it. It prepends common toolchain paths to `PATH` because herdr's server env lacks the
-   user's shell additions.
-3. The TUI (`src/`) loads entries, runs the event loop, and — **after `ratatui::restore()`** —
+2. `bin/picker.sh` resolves a versioned, checksummed release binary for managed installs and
+   falls back to Cargo for offline/linked checkouts. Its Bash typing-cat owns first-run feedback;
+   `--prepare` resolves the binary without launching it.
+3. The TUI (`src/`) claims the terminal before loading entries, uses embedded GIF frames through
+   Kitty graphics when supported (with the text cat as fallback) while a worker runs the source
+   commands, then runs the picker event loop and — **after
+   `ratatui::restore()`** —
    dispatches the accepted action. Interactive accepts (clone prompt, remove confirmation, `ghq
 get -u` output) deliberately run on the torn-down terminal, not inside the TUI.
 
@@ -66,6 +69,10 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
 - `source.rs` — the `Source` registry (kind / enabled / load) that `load_all` folds; adding a
   source's data is a new impl + one registry line. Preview/dispatch stay per-kind matches (a cycle
   otherwise), guarded by the compiler
+- `startup.rs` — the source-loading worker plus the full/compact typing-cat first frame;
+  progress messages cross a channel and never block the event loop
+- `graphics.rs` — conservative Herdr/terminal capability detection plus the embedded Kitty
+  animation protocol, placement-on-resize, and cleanup; protocol failures fall back to text
 - `runner.rs` — the `CommandRunner` trait (`SystemRunner` in prod, `MockRunner` in tests) every
   herdr/ghq/git call routes through, which is what makes the IO edge testable
 - `data.rs` — `Theme`, `Config`, `Entry`, and the per-source loaders `load_agents` /
@@ -187,9 +194,9 @@ order so the list stays stable.
   enforces it. `bin/release.sh` bumps both, so bump through it rather than by hand.
 - **The changelog is the release notes.** Every user-facing change adds a line to
   `CHANGELOG.md`'s `[Unreleased]` section _in the same commit_; `bin/release.sh` promotes that
-  section to a dated one and feeds it verbatim to `gh release create`. Commits are not
-  Conventional Commits and nothing is generated from `git log` — an empty `[Unreleased]` aborts
-  the release.
+  section to a dated one and tags. The tag workflow builds four native archives, generates
+  `SHA256SUMS`, and publishes that section verbatim after all targets pass. Commits are not
+  Conventional Commits and nothing comes from `git log` — an empty `[Unreleased]` aborts.
 - **The TUI never makes a network request.** `update.rs` spawns a detached `--update-check`
   child (own process group, no stdio) that runs `git ls-remote` and writes a cache; the picker
   only ever reads that file, so the badge lands on a _later_ launch. Do not "simplify" this into

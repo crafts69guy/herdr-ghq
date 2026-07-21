@@ -2,7 +2,7 @@
 # Changelog pane: the switcher binary in --changelog mode, rendering the CHANGELOG.md
 # that ships beside the installed plugin. No network.
 #
-# picker.sh owns the on-demand cargo build and the PATH fixup, so this is a wrapper
+# picker.sh owns prebuilt resolution, the Cargo fallback, and PATH fixup, so this is a wrapper
 # rather than a copy of them.
 set -euo pipefail
 

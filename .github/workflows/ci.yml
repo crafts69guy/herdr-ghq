@@ -40,3 +40,6 @@ jobs:
       # The guard that decides whether an install may rewrite a checkout.
       - name: Update guard spec
         run: bash tests/update_guard_spec.sh
+
+      - name: Binary bootstrap spec
+        run: bash tests/bootstrap_spec.sh
