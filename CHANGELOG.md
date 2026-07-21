@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-21
+
 ### Added
 
 - **The git workflow is built in now — the separate `git-hub` plugin is folded into the
@@ -344,7 +346,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open it in a new workspace, tab, split, or the current pane, plus clone (`ghq get`),
   update, remove, and a handoff to the git-hub menu.
 
-[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/crafts69guy/herdr-ghq/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/crafts69guy/herdr-ghq/compare/v0.4.0...v0.5.0
