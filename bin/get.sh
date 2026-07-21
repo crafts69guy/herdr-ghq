@@ -72,7 +72,7 @@ before="$(ghq list --full-path 2>/dev/null | sort)"
 
 printf '\n'
 if ! ghq get -- "$url"; then
-  notify "Clone failed for $url — check the pane."
+  notify "Clone failed for $url — check the pane." request
   printf '\n\033[2mpress any key to close\033[0m'
   read -rsn1 _ || true
   exit 1
@@ -89,7 +89,7 @@ if [[ -z "$newpath" ]]; then
 fi
 
 if [[ -z "$newpath" || ! -d "$newpath" ]]; then
-  notify "Cloned, but Ghq could not resolve the path to open."
+  notify "Cloned, but Ghq could not resolve the path to open." request
   log "could not resolve cloned path for '$url'"
   exit 0
 fi
@@ -109,7 +109,7 @@ if [[ "$open_after" == "true" ]]; then
     --label "$label" ||
     die "Ghq could not open $label after cloning." "open $default_target failed for $newpath"
 else
-  notify "Cloned $label."
+  notify "Cloned $label." done
   printf '\n\033[2mpress any key to close\033[0m'
   read -rsn1 _ || true
 fi

@@ -53,6 +53,9 @@ update_check = "true"
 # herdr notifications.
 notifications = "true"
 notification_position = "top-right"  # top-left | top-right | bottom-left | bottom-right
+# auto plays a sound that fits the event (done on success, request on failure); or force
+# one sound for every toast.
+notification_sound = "auto"          # auto | none | done | request
 
 # --- Key bindings (optional) -------------------------------------------------
 # Rebind any picker action with `keys.<action> = "chord[,chord…]"`. A chord is

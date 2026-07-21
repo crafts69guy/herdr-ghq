@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Notifications can play a sound now.** A new `notification_sound` setting (`⌥,` →
+  Notifications, or the config key) picks the toast sound: `auto` (default) fits the sound to
+  the event — a `done` chime when a clone or self-update succeeds, a `request` tone when a
+  clone fails or needs attention — while `none`, `done`, or `request` force one sound for
+  every toast.
+
 ### Changed
 
 - **Settings is now a floating overlay inside the switcher, like the `?` cheatsheet and the

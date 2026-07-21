@@ -86,6 +86,6 @@ if [[ -n "$root" && -f "$root/Cargo.toml" ]]; then
 fi
 
 version="$(plugin_field version || true)"
-notify "Updated to ${version:-the latest version}."
+notify "Updated to ${version:-the latest version}." done
 printf '\n\033[32mUpdated.\033[0m Open the changelog to see what changed.\n'
 pause

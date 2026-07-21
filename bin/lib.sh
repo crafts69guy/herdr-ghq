@@ -8,6 +8,8 @@
 
 NOTIFICATIONS_ENABLED="true"
 NOTIFICATION_POSITION="top-right"
+# auto = honour each call's per-event sound; none/done/request force one for every toast.
+NOTIFICATION_SOUND="auto"
 
 log() {
   printf 'herdr-ghq: %s\n' "$*" >&2
@@ -18,7 +20,7 @@ die() {
   local detail="${2:-$message}"
 
   log "$detail"
-  notify "$message"
+  notify "$message" request
   exit 1
 }
 
@@ -92,10 +94,11 @@ toml_get() {
 configure_notifications() {
   local file="$1"
   local allow_invalid="${2:-false}"
-  local enabled position
+  local enabled position sound
 
   enabled="$(toml_get notifications "$file" true)"
   position="$(toml_get notification_position "$file" top-right)"
+  sound="$(toml_get notification_sound "$file" auto)"
 
   case "$enabled" in
     true | false) ;;
@@ -123,8 +126,23 @@ configure_notifications() {
       ;;
   esac
 
+  case "$sound" in
+    auto | none | done | request) ;;
+    *)
+      if [[ "$allow_invalid" == "true" ]]; then
+        log "invalid notification_sound '$sound' in $file; using auto until Settings repairs it"
+        sound=auto
+      else
+        die \
+          "Invalid notification_sound setting. Use auto, none, done, or request." \
+          "invalid notification_sound '$sound' in $file"
+      fi
+      ;;
+  esac
+
   NOTIFICATIONS_ENABLED="$enabled"
   NOTIFICATION_POSITION="$position"
+  NOTIFICATION_SOUND="$sound"
 }
 
 # Herdr read commands emit JSON. Paths and IDs are plain strings in practice;
@@ -238,12 +256,22 @@ active_cwd() {
 
 notify() {
   local body="$1"
-  local command
+  # Per-event sound: done for completions, request for attention/errors, none for
+  # neutral. A caller omits it for a plain toast. `notification_sound = auto` honours
+  # this; any other config value forces one sound for every toast.
+  local event_sound="${2:-none}"
+  local command sound
   local response shown reason attempt
 
   [[ "$NOTIFICATIONS_ENABLED" == "true" ]] || return 0
 
-  command=("$(herdr_bin)" notification show "Ghq" --body "$body")
+  if [[ "$NOTIFICATION_SOUND" == "auto" ]]; then
+    sound="$event_sound"
+  else
+    sound="$NOTIFICATION_SOUND"
+  fi
+
+  command=("$(herdr_bin)" notification show "Ghq" --body "$body" --sound "$sound")
   if [[ -n "$NOTIFICATION_POSITION" ]]; then
     command+=(--position "$NOTIFICATION_POSITION")
   fi

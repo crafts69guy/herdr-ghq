@@ -139,6 +139,8 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | `clone_source`                          | seed the clone prompt from the `clipboard` (default) or start blank         |
 | `split_direction` / `split_ratio`       | geometry for split targets                                                  |
 | `update_check`                          | ask GitHub once a day whether a newer version is tagged (`true` by default) |
+| `notifications` / `notification_position` | herdr toasts, and which corner they land in                               |
+| `notification_sound`                    | `auto` (per-event, default) · `none` · `done` · `request`                   |
 
 The switcher is themed from herdr's `[theme.custom]`, and previews each kind as a card —
 a header with the entry's state as a pill, aligned `label value` rows, then bodies under

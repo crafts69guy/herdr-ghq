@@ -189,6 +189,13 @@ const SETTINGS: &[Setting] = &[
         hint: "notification corner",
         cycle: Cycle::Ring(&["top-right", "top-left", "bottom-left", "bottom-right"]),
     },
+    Setting {
+        group: "Notifications",
+        key: "notification_sound",
+        default: "auto",
+        hint: "toast sound: auto per-event, or force one",
+        cycle: Cycle::Ring(&["auto", "none", "done", "request"]),
+    },
 ];
 
 /// The next value in a ring. An unknown current value restarts at the first.
