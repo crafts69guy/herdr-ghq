@@ -209,6 +209,16 @@ impl Picker {
         v
     }
 
+    /// Select a configured group when it exists; disabled/empty groups fall back
+    /// to All so startup and a live settings apply never produce an empty picker.
+    fn select_group_or_all(&mut self, requested: GroupFilter) {
+        self.group = match requested {
+            GroupFilter::Only(kind) if !self.present_kinds.contains(&kind) => GroupFilter::All,
+            group => group,
+        };
+        self.recompute();
+    }
+
     /// Move to the next/previous non-empty group (wraps).
     fn cycle_group(&mut self, dir: i32) {
         let tabs = self.tabs();
@@ -396,7 +406,8 @@ impl App {
         let update = update::available(&cfg);
         let recent = history::load();
         let preview = PreviewState::new(&cfg, &theme, &script_dir);
-        let picker = Picker::new(entries, sort, recent);
+        let mut picker = Picker::new(entries, sort, recent);
+        picker.select_group_or_all(GroupFilter::parse(&cfg.get("default_tab", "all")));
         let keymap = keymap::Keymap::load(&cfg);
         let mode = keymap.start_mode();
         // Seed the settings form from the same cfg before it moves into the struct.
@@ -433,13 +444,15 @@ impl App {
     /// setting applied in the overlay takes effect in this session rather than on the
     /// next launch. Called after `Settings::apply` reports it wrote something.
     ///
-    /// The entry list is reloaded too, so `include_agents` / `include_workspaces` and
-    /// the label style update live; that resettles the selection at the top the way a
-    /// `sort` change reorders it anyway. `mode` is left as the user has it — `keymode`
-    /// only picks the *start* mode.
+    /// The entry list is reloaded too, so the source toggles and label style update
+    /// live; that resettles the selection at the top the way a `sort` change reorders
+    /// it anyway. `mode` is left as the user has it — `keymode` only picks the *start*
+    /// mode.
     fn reload_config(&mut self) {
         let runner = runner::SystemRunner;
         let cfg = Config::load();
+        let default_tab_changed =
+            self.cfg.get("default_tab", "all") != cfg.get("default_tab", "all");
 
         self.title_color = self
             .theme
@@ -475,13 +488,12 @@ impl App {
             .filter(|&k| entries.iter().any(|e| e.kind == k))
             .collect();
         self.picker.entries = entries;
-        // A group whose kind just disappeared falls back to All rather than an empty list.
-        if let GroupFilter::Only(k) = self.picker.group {
-            if !self.picker.present_kinds.contains(&k) {
-                self.picker.group = GroupFilter::All;
-            }
-        }
-        self.picker.recompute();
+        let requested = if default_tab_changed {
+            GroupFilter::parse(&cfg.get("default_tab", "all"))
+        } else {
+            self.picker.group
+        };
+        self.picker.select_group_or_all(requested);
 
         self.cfg = cfg;
     }
@@ -576,6 +588,20 @@ impl App {
             self.picker.move_sel(delta.signum());
             true
         }
+    }
+
+    /// Worktrees are openable and reviewable, but repository update/removal has
+    /// different semantics and is intentionally unavailable for them.
+    pub fn action_available(&self, action: keymap::Action) -> bool {
+        let unsupported = matches!(
+            action,
+            keymap::Action::Accept(Accept::Update | Accept::Remove)
+        );
+        !(unsupported
+            && self
+                .picker
+                .selected_entry()
+                .is_some_and(|entry| entry.kind == Kind::Worktree))
     }
 }
 
@@ -679,6 +705,9 @@ fn read_menu_conf() -> Vec<git::Custom> {
 /// Run a resolved [`keymap::Action`] against the app.
 fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
     use keymap::Action;
+    if !app.action_available(action) {
+        return Flow::Continue;
+    }
     match action {
         Action::Quit => return Flow::Quit,
         Action::Help => app.show_help = true,
@@ -1121,11 +1150,12 @@ mod tests {
     }
 
     #[test]
-    fn kind_sort_groups_agents_then_workspaces_then_repos() {
-        let e = sample();
+    fn kind_sort_groups_agents_workspaces_repos_then_worktrees() {
+        let mut e = sample();
+        e.push(entry(Kind::Worktree, "/tmp/zeta.feature", "zeta feature"));
         let order = browse_order(&e, &HashMap::new(), GroupFilter::All, SortMode::Kind);
-        // agent(1), workspace(3), repos in load order(0,2)
-        assert_eq!(order, vec![1, 3, 0, 2]);
+        // agent(1), workspace(3), repos in load order(0,2), worktree(4)
+        assert_eq!(order, vec![1, 3, 0, 2, 4]);
     }
 
     /// An app whose preview pane sits at 0,0 and shows `rows` of a `len`-row card.
@@ -1359,6 +1389,37 @@ mod tests {
         );
         // only the two repos, alphabetical: mid(2), zeta(0)
         assert_eq!(order, vec![2, 0]);
+    }
+
+    #[test]
+    fn configured_default_tab_selects_a_present_group_or_all() {
+        let repos = Config::from_pairs(&[("default_tab", "repos")]);
+        let app = App::new(sample(), Theme::default(), repos, ".".into());
+        assert_eq!(app.picker.group, GroupFilter::Only(Kind::Repo));
+
+        let missing = Config::from_pairs(&[("default_tab", "worktrees")]);
+        let app = App::new(sample(), Theme::default(), missing, ".".into());
+        assert_eq!(app.picker.group, GroupFilter::All);
+
+        let mut entries = sample();
+        entries.push(entry(Kind::Worktree, "/tmp/repo.feature", "repo"));
+        let worktrees = Config::from_pairs(&[("default_tab", "worktrees")]);
+        let app = App::new(entries, Theme::default(), worktrees, ".".into());
+        assert_eq!(app.picker.group, GroupFilter::Only(Kind::Worktree));
+    }
+
+    #[test]
+    fn worktree_selection_disables_repo_update_and_remove() {
+        let app = App::new(
+            vec![entry(Kind::Worktree, "/tmp/repo.feature", "repo")],
+            Theme::default(),
+            Config::default(),
+            ".".into(),
+        );
+        assert!(!app.action_available(keymap::Action::Accept(Accept::Update)));
+        assert!(!app.action_available(keymap::Action::Accept(Accept::Remove)));
+        assert!(app.action_available(keymap::Action::GitMenu));
+        assert!(app.action_available(keymap::Action::Accept(Accept::Tab)));
     }
 
     fn key(code: KeyCode, mods: KeyModifiers) -> crossterm::event::KeyEvent {

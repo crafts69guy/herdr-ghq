@@ -87,7 +87,7 @@ pub fn dispatch(
                 _ => focus_agent(runner, &e.id),
             }
         }
-        Kind::Repo => {
+        Kind::Repo | Kind::Worktree => {
             let dir = e.dir.clone().unwrap_or_default();
             match accept {
                 Accept::Default => {
@@ -99,8 +99,11 @@ pub fn dispatch(
                 Accept::Tab => open_repo(runner, "tab", &dir, origin_pane, &e.label, cfg),
                 Accept::Split => open_repo(runner, "split", &dir, origin_pane, &e.label, cfg),
                 Accept::Pane => open_repo(runner, "pane", &dir, origin_pane, &e.label, cfg),
-                Accept::Update => update(runner, &e.id, &e.label),
-                Accept::Remove => remove(runner, &dir, &e.label),
+                Accept::Update if e.kind == Kind::Repo => update(runner, &e.id, &e.label),
+                Accept::Remove if e.kind == Kind::Repo => remove(runner, &dir, &e.label),
+                Accept::Update | Accept::Remove => {
+                    Err(anyhow!("update/remove is not supported for worktrees"))
+                }
                 // Git review is intercepted in `main` and `exec`s `review.sh`; a
                 // clone/update-plugin `exec`s its own script. None reach here.
                 Accept::Git | Accept::Clone | Accept::UpdatePlugin => unreachable!(),
@@ -270,6 +273,20 @@ mod tests {
         }
     }
 
+    fn worktree_entry(dir: &str) -> Entry {
+        Entry {
+            kind: Kind::Worktree,
+            id: dir.into(),
+            dir: Some(dir.into()),
+            label: "feature-auth".into(),
+            icon: String::new(),
+            icon_color: Color::Reset,
+            primary: "o/r".into(),
+            secondary: "feature/auth".into(),
+            search: String::new(),
+        }
+    }
+
     /// A throwaway real directory: `open_repo` refuses a path that is not one.
     fn tmp_repo(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("ghq-{tag}-{}", std::process::id()));
@@ -297,6 +314,56 @@ mod tests {
             vec!["herdr", "tab", "create", "--cwd", &path, "--label", "r", "--focus"]
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_worktree_opens_its_linked_path() {
+        let dir = tmp_repo("linked-worktree");
+        let path = dir.to_string_lossy().to_string();
+        let runner = MockRunner::new().on("herdr tab create", "");
+        dispatch(
+            &runner,
+            Some(worktree_entry(&path)),
+            Accept::Tab,
+            "pane-1",
+            &Config::default(),
+            ".",
+            "workspace",
+        )
+        .unwrap();
+        assert_eq!(
+            runner.calls()[0],
+            vec![
+                "herdr",
+                "tab",
+                "create",
+                "--cwd",
+                &path,
+                "--label",
+                "feature-auth",
+                "--focus"
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dispatch_worktree_rejects_repo_update_and_remove() {
+        let runner = MockRunner::new();
+        for accept in [Accept::Update, Accept::Remove] {
+            let err = dispatch(
+                &runner,
+                Some(worktree_entry("/linked")),
+                accept,
+                "",
+                &Config::default(),
+                ".",
+                "workspace",
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("not supported for worktrees"));
+        }
+        assert!(runner.calls().is_empty());
     }
 
     #[test]

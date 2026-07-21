@@ -1,7 +1,7 @@
 //! Data layer: theme, plugin config, and the unified entry list (agents,
-//! workspaces, ghq repos).
+//! workspaces, ghq repos, and linked Git worktrees).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -154,15 +154,17 @@ pub enum Kind {
     Agent,
     Workspace,
     Repo,
+    Worktree,
 }
 
 impl Kind {
-    /// Stable ordering used by the "Kind" sort (agents first, repos last).
+    /// Stable ordering used by the "Kind" sort (agents first, worktrees last).
     pub fn order(self) -> u8 {
         match self {
             Kind::Agent => 0,
             Kind::Workspace => 1,
             Kind::Repo => 2,
+            Kind::Worktree => 3,
         }
     }
 }
@@ -175,7 +177,7 @@ pub enum SortMode {
     Recent,
     /// Alphabetical by the primary column.
     Name,
-    /// Grouped by kind: agents, then workspaces, then repos.
+    /// Grouped by kind: agents, workspaces, repos, then linked worktrees.
     Kind,
 }
 
@@ -213,6 +215,18 @@ pub enum GroupFilter {
 }
 
 impl GroupFilter {
+    /// Config vocabulary for the tab selected at startup / settings apply.
+    /// Unknown values are deliberately lenient and land on `All`.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "agents" => GroupFilter::Only(Kind::Agent),
+            "workspaces" => GroupFilter::Only(Kind::Workspace),
+            "repos" => GroupFilter::Only(Kind::Repo),
+            "worktrees" => GroupFilter::Only(Kind::Worktree),
+            _ => GroupFilter::All,
+        }
+    }
+
     /// Does `kind` pass this filter?
     pub fn matches(self, kind: Kind) -> bool {
         match self {
@@ -227,6 +241,7 @@ impl GroupFilter {
             GroupFilter::Only(Kind::Agent) => "Agents",
             GroupFilter::Only(Kind::Workspace) => "Workspaces",
             GroupFilter::Only(Kind::Repo) => "Repos",
+            GroupFilter::Only(Kind::Worktree) => "Worktrees",
         }
     }
 }
@@ -234,7 +249,7 @@ impl GroupFilter {
 #[derive(Clone)]
 pub struct Entry {
     pub kind: Kind,
-    /// Target id: terminal id (agent), workspace id, or ghq relative path (repo).
+    /// Target id: terminal id, workspace id, ghq relative path, or worktree path.
     pub id: String,
     /// Absolute directory when one applies (repo path, agent cwd).
     pub dir: Option<String>,
@@ -367,6 +382,96 @@ pub fn load_repos(runner: &dyn CommandRunner, theme: &Theme, root: &str) -> Vec<
     entries
 }
 
+#[derive(Default)]
+struct WorktreeRecord {
+    path: String,
+    head: String,
+    branch: Option<String>,
+    prunable: bool,
+}
+
+/// Parse `git worktree list --porcelain -z`. Git promises this format is stable;
+/// NUL fields also preserve paths and reasons containing whitespace or newlines.
+fn parse_worktree_list(raw: &str) -> Vec<WorktreeRecord> {
+    let mut records = Vec::new();
+    let mut current = WorktreeRecord::default();
+
+    for field in raw.split('\0') {
+        if field.is_empty() {
+            if !current.path.is_empty() {
+                records.push(current);
+                current = WorktreeRecord::default();
+            }
+            continue;
+        }
+        if let Some(path) = field.strip_prefix("worktree ") {
+            current.path = path.to_string();
+        } else if let Some(head) = field.strip_prefix("HEAD ") {
+            current.head = head.to_string();
+        } else if let Some(branch) = field.strip_prefix("branch refs/heads/") {
+            current.branch = Some(branch.to_string());
+        } else if field == "prunable" || field.starts_with("prunable ") {
+            current.prunable = true;
+        }
+    }
+    if !current.path.is_empty() {
+        records.push(current);
+    }
+    records
+}
+
+/// Linked worktrees attached to every ghq repository. The first porcelain record
+/// is the main worktree, already represented by the Repos source, so it is skipped.
+pub fn load_worktrees(runner: &dyn CommandRunner, theme: &Theme, root: &str) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    let Some(repos) = runner.capture("ghq", &["list"]) else {
+        return entries;
+    };
+
+    for rel in repos.lines().filter(|line| !line.is_empty()) {
+        let repo = format!("{}/{rel}", root.trim_end_matches('/'));
+        let Some(raw) = runner.capture(
+            "git",
+            &["-C", &repo, "worktree", "list", "--porcelain", "-z"],
+        ) else {
+            continue;
+        };
+        let (host, rest) = rel.split_once('/').unwrap_or(("", rel));
+        let (icon, color) = host_icon(host, theme);
+
+        for record in parse_worktree_list(&raw).into_iter().skip(1) {
+            if record.prunable
+                || !std::path::Path::new(&record.path).is_dir()
+                || !seen.insert(record.path.clone())
+            {
+                continue;
+            }
+            let branch = record.branch.unwrap_or_else(|| {
+                let short: String = record.head.chars().take(8).collect();
+                if short.is_empty() {
+                    "detached".into()
+                } else {
+                    format!("detached@{short}")
+                }
+            });
+            let label = basename(&record.path);
+            entries.push(Entry {
+                kind: Kind::Worktree,
+                id: record.path.clone(),
+                dir: Some(record.path.clone()),
+                label,
+                icon: icon.into(),
+                icon_color: color,
+                primary: rest.to_string(),
+                secondary: branch.clone(),
+                search: format!("{rel} {branch} {} worktree", record.path),
+            });
+        }
+    }
+    entries
+}
+
 fn host_icon(host: &str, theme: &Theme) -> (&'static str, Color) {
     match host {
         "github.com" => ("", theme.or("mauve", Color::Magenta)),
@@ -394,6 +499,16 @@ mod tests {
         {"workspace_id":"ws-1","label":"work","number":2,"pane_count":3,"focused":true}
     ]}}"#;
     const REPOS: &str = "github.com/o/repo-a\nbitbucket.org/o/repo-b\n";
+
+    #[test]
+    fn group_filter_parses_config_and_falls_back_to_all() {
+        assert_eq!(GroupFilter::parse("agents"), GroupFilter::Only(Kind::Agent));
+        assert_eq!(
+            GroupFilter::parse("worktrees"),
+            GroupFilter::Only(Kind::Worktree)
+        );
+        assert_eq!(GroupFilter::parse("unknown"), GroupFilter::All);
+    }
 
     #[test]
     fn load_agents_maps_json_and_drops_idless_and_labelless() {
@@ -431,11 +546,54 @@ mod tests {
     }
 
     #[test]
+    fn load_worktrees_keeps_only_live_linked_records() {
+        let dir = std::env::temp_dir().join(format!("ghq-worktrees-{}", std::process::id()));
+        let linked = dir.join("feature branch\nodd");
+        let detached = dir.join("detached");
+        let stale = dir.join("stale");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir_all(&detached).unwrap();
+        std::fs::create_dir_all(&stale).unwrap();
+
+        let raw = format!(
+            "worktree /root/github.com/o/repo-a\0HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0branch refs/heads/main\0\0worktree {}\0HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\0branch refs/heads/feature/nul-safe\0locked keep it\0\0worktree {}\0HEAD 1234567890abcdef1234567890abcdef12345678\0detached\0\0worktree {}\0HEAD cccccccccccccccccccccccccccccccccccccccc\0branch refs/heads/stale\0prunable missing gitdir\0\0",
+            linked.display(),
+            detached.display(),
+            stale.display()
+        );
+        let runner = MockRunner::new()
+            .on("ghq list", "github.com/o/repo-a\n")
+            .on("git -C /root/github.com/o/repo-a worktree list", &raw);
+
+        let e = load_worktrees(&runner, &Theme::default(), "/root");
+        assert_eq!(e.len(), 2);
+        assert!(e.iter().all(|entry| entry.kind == Kind::Worktree));
+        assert_eq!(e[0].dir.as_deref(), linked.to_str());
+        assert_eq!(e[0].primary, "o/repo-a");
+        assert_eq!(e[0].secondary, "feature/nul-safe");
+        assert_eq!(e[1].secondary, "detached@12345678");
+        assert!(e[0].search.contains("feature branch\nodd"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn worktree_parser_preserves_unknown_fields_and_unterminated_last_record() {
+        let records = parse_worktree_list(
+            "worktree /main\0HEAD abc\0branch refs/heads/main\0future value\0\0worktree /linked\0HEAD def",
+        );
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].path, "/linked");
+        assert_eq!(records[1].head, "def");
+    }
+
+    #[test]
     fn a_source_that_returns_nothing_yields_no_entries() {
         // Unseeded: empty stdout is unparseable JSON / an empty repo list, so
         // each loader must come up empty rather than panic.
         assert!(load_agents(&MockRunner::new(), &Theme::default()).is_empty());
         assert!(load_workspaces(&MockRunner::new(), &Theme::default()).is_empty());
         assert!(load_repos(&MockRunner::new(), &Theme::default(), "/root").is_empty());
+        assert!(load_worktrees(&MockRunner::new(), &Theme::default(), "/root").is_empty());
     }
 }

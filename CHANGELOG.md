@@ -7,6 +7,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A **Worktrees** tab now lists linked Git worktrees across every ghq repository without
+  duplicating the main checkout already shown under Repos. Worktrees open in a workspace,
+  tab, split, or pane and use the built-in Git menu at their own path; repo-only update and
+  remove actions stay hidden. `include_worktrees` controls the source and defaults to `true`.
+- `default_tab` chooses the active startup group (`all`, `agents`, `workspaces`, `repos`, or
+  `worktrees`). Applying it in the settings overlay switches immediately; an empty, disabled,
+  or unrecognised group safely falls back to All.
+
 ## [0.8.0] - 2026-07-21
 
 ### Added

@@ -17,6 +17,11 @@ label = "repo"
 # Unified switcher sources. The picker blends these with repos.
 include_agents = "true"       # running herdr agents (enter = jump to them)
 include_workspaces = "true"   # open herdr workspaces (enter = switch to them)
+include_worktrees = "true"    # linked Git worktrees (open + Git menu; no update/remove)
+
+# Active group when the picker opens, and immediately after this setting is applied.
+# An unavailable or empty group falls back to All.
+default_tab = "all"           # all | agents | workspaces | repos | worktrees
 
 # Resting list order (no query). Cycle live with alt-s; Tab narrows to a group.
 sort = "recent"               # recent (latest opened) | name | kind

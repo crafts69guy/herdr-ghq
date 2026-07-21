@@ -100,6 +100,20 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         group: "Sources",
+        key: "include_worktrees",
+        default: "true",
+        hint: "list linked Git worktrees in the switcher",
+        cycle: Cycle::Ring(BOOL),
+    },
+    Setting {
+        group: "Sources",
+        key: "default_tab",
+        default: "all",
+        hint: "active tab at startup and after apply",
+        cycle: Cycle::Ring(&["all", "agents", "workspaces", "repos", "worktrees"]),
+    },
+    Setting {
+        group: "Sources",
         key: "sort",
         default: "recent",
         hint: "resting list order (recent/name/kind)",

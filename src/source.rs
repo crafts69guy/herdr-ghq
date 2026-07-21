@@ -2,7 +2,7 @@
 //!
 //! Each source knows its kind, whether it is turned on, and how to load its
 //! entries. [`load_all`] folds the registry; [`kinds`] gives the canonical tab
-//! order. A fourth source (tmux sessions, docker containers, MRU dirs…) is a
+//! order. Another source (tmux sessions, docker containers, MRU dirs…) is a
 //! new [`Source`] impl plus one line in [`registry`] — nothing on the
 //! load/metadata side has an exhaustive `match Kind` to update.
 //!
@@ -69,9 +69,27 @@ impl Source for Repos {
     }
 }
 
-/// The sources in list/tab order: agents, workspaces, repos.
+struct Worktrees;
+impl Source for Worktrees {
+    fn kind(&self) -> Kind {
+        Kind::Worktree
+    }
+    fn enabled(&self, cfg: &Config) -> bool {
+        cfg.bool("include_worktrees", true)
+    }
+    fn load(&self, ctx: &LoadCtx) -> Vec<Entry> {
+        data::load_worktrees(ctx.runner, ctx.theme, ctx.root)
+    }
+}
+
+/// The sources in list/tab order: agents, workspaces, repos, worktrees.
 pub fn registry() -> Vec<Box<dyn Source>> {
-    vec![Box::new(Agents), Box::new(Workspaces), Box::new(Repos)]
+    vec![
+        Box::new(Agents),
+        Box::new(Workspaces),
+        Box::new(Repos),
+        Box::new(Worktrees),
+    ]
 }
 
 /// Load every enabled source, in registry order.
@@ -123,8 +141,11 @@ mod tests {
 
     #[test]
     fn load_all_skips_a_disabled_source_without_querying_it() {
-        let cfg =
-            Config::from_pairs(&[("include_agents", "false"), ("include_workspaces", "false")]);
+        let cfg = Config::from_pairs(&[
+            ("include_agents", "false"),
+            ("include_workspaces", "false"),
+            ("include_worktrees", "false"),
+        ]);
         let runner = MockRunner::new().on("ghq list", REPOS);
         let theme = Theme::default();
         let e = load_all(&cfg, &ctx(&runner, &theme));
@@ -138,10 +159,20 @@ mod tests {
                 .any(|c| c.contains(&"agent".to_string())),
             "include_agents=false must skip the agent query"
         );
+        assert!(
+            !runner
+                .calls()
+                .iter()
+                .any(|c| c.first().is_some_and(|p| p == "git")),
+            "include_worktrees=false must skip every git worktree query"
+        );
     }
 
     #[test]
     fn kinds_are_the_registry_order() {
-        assert_eq!(kinds(), vec![Kind::Agent, Kind::Workspace, Kind::Repo]);
+        assert_eq!(
+            kinds(),
+            vec![Kind::Agent, Kind::Workspace, Kind::Repo, Kind::Worktree]
+        );
     }
 }

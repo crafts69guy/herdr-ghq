@@ -101,7 +101,7 @@ pub fn render(
     let lines = match entry.kind {
         Kind::Agent => agent_card(entry, runner, width, &p, theme),
         Kind::Workspace => workspace_card(entry, runner, width, &p, theme),
-        Kind::Repo => repo_card(entry, runner, script_dir, cfg, width, &p, theme),
+        Kind::Repo | Kind::Worktree => repo_card(entry, runner, script_dir, cfg, width, &p, theme),
     };
     Text::from(lines)
 }

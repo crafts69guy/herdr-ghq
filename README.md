@@ -6,13 +6,14 @@
 ![license MIT](https://img.shields.io/badge/license-MIT-green)
 
 A [herdr](https://herdr.dev) plugin that puts your running **agents**, open **workspaces**,
-and every [`ghq`](https://github.com/x-motemen/ghq) **repository** in one fuzzy switcher —
-and makes `enter` do the right thing for whatever you land on.
+every [`ghq`](https://github.com/x-motemen/ghq) **repository**, and its linked Git
+**worktrees** in one fuzzy switcher — and makes `enter` do the right thing for whatever
+you land on.
 
 Where `ghq list | fzf | cd` can only change a directory, this uses herdr as a multiplexer:
-jump to a live agent, switch workspaces, or open a repo exactly where you want it — a new
-workspace, tab, split, or the current pane. It is a Rust TUI (ratatui + nucleo); no fzf
-required.
+jump to a live agent, switch workspaces, or open a repo/worktree exactly where you want it —
+a new workspace, tab, split, or the current pane. It is a Rust TUI (ratatui + nucleo); no
+fzf required.
 
 ![The herdr-ghq switcher: a fuzzy list with live preview and the `?` keybindings popup open](docs/switcher.png)
 
@@ -63,6 +64,7 @@ command bar re-labels itself per mode. Press `i` or `/` in Normal to type again.
 | **agent**     | jump to it (`herdr agent focus`)                                          |
 | **workspace** | switch to it (`herdr workspace focus`)                                    |
 | **repo**      | open it in `default_target` — a new workspace unless configured otherwise |
+| **worktree**  | open its linked checkout in `default_target`                              |
 
 **Insert mode** (type to filter; `esc` → Normal, `^c` closes):
 
@@ -72,7 +74,7 @@ command bar re-labels itself per mode. Press `i` or `/` in Normal to type again.
 | `^j`/`^n` · `^k`/`^p` | down · up                                                             |
 | `^t` · `^v` · `^o` | open in a new **tab** · **split** · the **current pane** (`cd`)          |
 | `⌥w` · `^g` · `^r` · `^x` | to a **workspace** · the **git menu** · `ghq get -u` · **remove** |
-| `tab` / `⇧tab`     | cycle the group filter (All → Agents → Workspaces → Repos)               |
+| `tab` / `⇧tab`     | cycle groups (All → Agents → Workspaces → Repos → Worktrees)              |
 | `⌥p` · `⌥s` · `⌥j`/`⌥k` | toggle preview · cycle sort · scroll the preview                    |
 | `^u` · `^w` · `⌫`  | clear the query · delete a word · delete a char (readline)               |
 | `⌥,` · `⌥c` · `⌥u` · `?` | settings · changelog · update the plugin itself · this cheatsheet  |
@@ -121,9 +123,10 @@ Bind any of these the same way as `ghq.menu`:
 ## Git menu
 
 `^g` (Insert) or `␣g` (Normal) opens a git menu **overlay** over the switcher — the floating-card
-shape of `⌥c`/`⌥,` — acting on the highlighted repo (or, via the `ghq.git` action on `prefix+g`,
-the pane you launched from). Walk it with `↑`/`↓`, `enter` runs the row, a mnemonic letter runs it
-directly, `esc` closes.
+shape of `⌥c`/`⌥,` — acting on the highlighted repo or linked worktree (or, via the `ghq.git`
+action on `prefix+g`, the pane you launched from). Walk it with `↑`/`↓`, `enter` runs the row,
+a mnemonic letter runs it directly, `esc` closes. Worktrees deliberately omit the repo-only
+update and remove actions.
 
 | Row                   | Runs                                                                 |
 | --------------------- | ------------------------------------------------------------------- |
@@ -152,7 +155,9 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | Key                                     | Values                                                                      |
 | --------------------------------------- | --------------------------------------------------------------------------- |
 | `default_target`                        | `workspace` (default) · `tab` · `split` · `pane`                            |
+| `default_tab`                           | `all` (default) · `agents` · `workspaces` · `repos` · `worktrees`            |
 | `include_agents` / `include_workspaces` | blend agents/workspaces into the list                                       |
+| `include_worktrees`                     | list linked Git worktrees (`true` by default)                               |
 | `sort`                                  | `recent` (default) · `name` · `kind`                                        |
 | `keymode`                               | start mode: `insert` (default) · `normal` (Vim-first)                       |
 | `keys.<action>`                         | rebind a key, e.g. `keys.tab = "ctrl-y"` (see below)                        |
@@ -167,10 +172,10 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 
 The switcher is themed from herdr's `[theme.custom]`, and previews each kind as a card —
 a header with the entry's state as a pill, aligned `label value` rows, then bodies under
-captioned rules. Repos show branch · clean/dirty · last commit, a file tree, and a README
-excerpt rendered as markdown; agents show what they are doing and their recent output, in
-the agent's own colours; workspaces list their tabs, each with its live status. Long cards
-scroll with `alt-j` / `alt-k`.
+captioned rules. Repos and worktrees show branch · clean/dirty · last commit, a file tree,
+and a README excerpt rendered as markdown; agents show what they are doing and their recent
+output, in the agent's own colours; workspaces list their tabs, each with its live status.
+Long cards scroll with `alt-j` / `alt-k`.
 
 `update_check` only ever shows `↑ v0.6.0` in the command bar — it never installs anything.
 Set it to `false` and the plugin makes no outbound requests at all.
@@ -182,9 +187,10 @@ new pane steals focus, then opens that pane — an overlay for the picker and cl
 popup for the changelog.
 
 The picker itself is the Rust TUI in `src/`, built to `target/release/herdr-ghq-switcher` by
-`bin/picker.sh` on first run. It reads `herdr agent list`, `herdr workspace list`, and
-`ghq list`, fuzzy-filters with nucleo, and previews the selection as a card drawn in your
-herdr theme colours — `bin/preview.sh` supplies only the repo's file tree. On
+`bin/picker.sh` on first run. It reads `herdr agent list`, `herdr workspace list`, `ghq list`,
+and Git's stable `worktree list --porcelain -z` output, fuzzy-filters with nucleo, and previews
+the selection as a card drawn in your herdr theme colours — `bin/preview.sh` supplies only the
+repo/worktree file tree. On
 accept it maps the key to a herdr CLI verb — `agent focus`, `workspace focus`,
 `workspace create`, `tab create`, `pane split`, `pane send-text` — always targeting the
 captured origin pane or a real id from herdr, never a guessed one.

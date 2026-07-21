@@ -439,6 +439,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     // Own the caps so the `Pill`s can borrow them for `pill_row`.
     let shown: Vec<(String, &str, Color, Action)> = items
         .iter()
+        .filter(|&&(action, _, _)| app.action_available(action))
         .filter_map(|&(action, label, color)| {
             app.keymap
                 .label_for(app.mode, action)
@@ -541,6 +542,9 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     // A row for `action`, or nothing when the current mode does not bind it —
     // so Insert hides `gg`/`G` and Normal shows the manage verbs as `␣…`.
     let opt = |action: Action, color: Color, desc: &'static str| -> Option<Line<'static>> {
+        if !app.action_available(action) {
+            return None;
+        }
         app.keymap
             .label_for(app.mode, action)
             .map(|cap| row(&cap, color, desc))
