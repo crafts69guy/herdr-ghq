@@ -30,6 +30,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `worktrees`). Applying it in the settings overlay switches immediately; an empty, disabled,
   or unrecognised group safely falls back to All.
 
+### Changed
+
+- **The Workspaces preview is now a dashboard.** Instead of a bare tab list, it shows a
+  pane/agent summary with a colour-coded status breakdown, the running agents with their
+  status and current task, and the distinct repositories their panes sit in with each one's
+  branch and a dirty marker — read from `pane list` so it reflects what the workspace is
+  actually running.
+
 ## [0.8.0] - 2026-07-21
 
 ### Added

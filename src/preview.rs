@@ -10,10 +10,17 @@
 //! `result.agent_status` instead yields no error, just "unknown". `preview.sh`
 //! keeps only the file tree, the one part that arrives as ANSI already.
 //!
+//! The workspace card is a dashboard rather than a copy of `workspace get`,
+//! which counts panes but names none: it reads `pane list`, narrows it to the
+//! workspace, and renders the running agents (name, status, current task) and
+//! the distinct repositories their panes sit in (branch + dirty, the same git
+//! read `repo_card` makes).
+//!
 //! `render` shells out and costs ~100ms on a large repo — mostly `git status`
 //! — so it runs on a [`Worker`] thread rather than between a keypress and the
 //! next frame.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -389,73 +396,216 @@ fn workspace_card(
         header(&entry.icon, p.accent, label, pills, p),
         Line::raw(""),
     ];
-    if let Some(n) = w["number"].as_i64() {
-        lines.push(meta("number", &format!("#{n}"), width, p));
+
+    // `workspace get` counts panes but names none, so the card's body comes from
+    // `pane list` — every pane in the session — narrowed to this workspace once.
+    let list = herdr_json(runner, &["pane", "list"]);
+    let panes: Vec<&Value> = list["result"]["panes"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|pane| pane["workspace_id"].as_str() == Some(entry.id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let pane_count = w["pane_count"].as_i64().unwrap_or(panes.len() as i64);
+    lines.extend(workspace_stats(&panes, pane_count, p, theme));
+
+    lines.push(Line::raw(""));
+    lines.push(rule("agents", width, p));
+    lines.push(Line::raw(""));
+    lines.extend(workspace_agents(&panes, width, p, theme));
+
+    let repos = workspace_repos(runner, &panes, width, p, theme);
+    if !repos.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(rule("repos", width, p));
+        lines.push(Line::raw(""));
+        lines.extend(repos);
     }
-    lines.push(meta(
-        "panes",
-        &w["pane_count"].as_i64().unwrap_or(0).to_string(),
-        width,
-        p,
-    ));
-    lines.push(Line::raw(""));
-    lines.push(rule("tabs", width, p));
-    lines.push(Line::raw(""));
-    lines.extend(workspace_tabs(
-        runner,
-        &entry.id,
-        w["active_tab_id"].as_str().unwrap_or(""),
-        width,
-        p,
-        theme,
-    ));
     lines
 }
 
-/// The workspace's tabs. `workspace get` carries counts but no tab array, so the
-/// rows come from `tab list` — which returns every tab in the session — narrowed
-/// by workspace id.
-fn workspace_tabs(
+/// The agent a pane is running, if any — the field's absence (a plain shell) or
+/// emptiness both read as "no agent".
+fn pane_agent(pane: &Value) -> Option<&str> {
+    pane["agent"].as_str().filter(|s| !s.is_empty())
+}
+
+/// A pane's working directory, foreground first like [`agent_card`].
+fn pane_cwd(pane: &Value) -> Option<&str> {
+    pane["foreground_cwd"]
+        .as_str()
+        .or_else(|| pane["cwd"].as_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// The last path component — a repo's short name.
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// The summary rows: pane and agent counts, then a colour-coded breakdown of the
+/// agents by status. The breakdown is skipped when nothing is running.
+fn workspace_stats(
+    panes: &[&Value],
+    pane_count: i64,
+    p: &Ink,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let agents: Vec<&Value> = panes
+        .iter()
+        .copied()
+        .filter(|pane| pane_agent(pane).is_some())
+        .collect();
+
+    let mut lines = vec![Line::from(vec![
+        Span::raw("  "),
+        Span::styled("panes  ", Style::default().fg(p.sub)),
+        Span::styled(pane_count.to_string(), Style::default().fg(p.text)),
+        Span::styled("   ·   ", Style::default().fg(p.overlay)),
+        Span::styled("agents  ", Style::default().fg(p.sub)),
+        Span::styled(agents.len().to_string(), Style::default().fg(p.text)),
+    ])];
+
+    if !agents.is_empty() {
+        // Count by status, keeping first-seen order so the row stays stable.
+        let mut order: Vec<String> = Vec::new();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for a in &agents {
+            let s = a["agent_status"].as_str().unwrap_or("unknown").to_string();
+            if counts
+                .insert(s.clone(), *counts.get(&s).unwrap_or(&0) + 1)
+                .is_none()
+            {
+                order.push(s);
+            }
+        }
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled("status ", Style::default().fg(p.sub)),
+        ];
+        for status in order {
+            let n = counts[&status];
+            spans.push(Span::styled(
+                " ● ".to_string(),
+                Style::default().fg(state_color(theme, &status)),
+            ));
+            spans.push(Span::styled(
+                format!("{n} {status}"),
+                Style::default().fg(p.sub),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+/// The running agents: a coloured bullet, the agent's name, a status pill, and
+/// the task it reports as its terminal title. The focused pane keeps the same
+/// `▌` marker the list uses for its selection.
+fn workspace_agents(panes: &[&Value], width: u16, p: &Ink, theme: &Theme) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for pane in panes.iter().copied() {
+        let Some(agent) = pane_agent(pane) else {
+            continue;
+        };
+        let status = pane["agent_status"].as_str().unwrap_or("unknown");
+        let state = state_color(theme, status);
+        let marker = if pane["focused"].as_bool().unwrap_or(false) {
+            "▌"
+        } else {
+            " "
+        };
+        out.push(clip_line(
+            Line::from(vec![
+                Span::styled(marker.to_string(), Style::default().fg(p.accent)),
+                Span::styled("● ".to_string(), Style::default().fg(state)),
+                Span::styled(
+                    agent.to_string(),
+                    Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                pill(status, state, p),
+            ]),
+            width as usize,
+        ));
+        if let Some(title) = pane["terminal_title_stripped"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            out.push(clip_line(
+                Line::from(vec![
+                    Span::styled("   ⤷ ".to_string(), Style::default().fg(p.accent)),
+                    Span::styled(title.to_string(), Style::default().fg(p.sub)),
+                ]),
+                width as usize,
+            ));
+        }
+    }
+    if out.is_empty() {
+        out.push(note("(no agents running)", p));
+    }
+    out
+}
+
+/// The distinct repositories open across the workspace's panes, each with its
+/// branch and a dirty marker — the same git read [`repo_card`] shows, gathered
+/// over every pane's cwd and deduplicated in first-seen order.
+fn workspace_repos(
     runner: &dyn CommandRunner,
-    wid: &str,
-    active: &str,
+    panes: &[&Value],
     width: u16,
     p: &Ink,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let v = herdr_json(runner, &["tab", "list"]);
-    let Some(tabs) = v["result"]["tabs"].as_array() else {
-        return vec![note("(tabs unavailable)", p)];
-    };
-    let mut out = Vec::new();
-    for t in tabs
-        .iter()
-        .filter(|t| t["workspace_id"].as_str() == Some(wid))
-    {
-        let id = t["tab_id"].as_str().unwrap_or("");
-        let label = t["label"].as_str().unwrap_or(id);
-        let status = t["agent_status"].as_str().unwrap_or("unknown");
-        let panes = t["pane_count"].as_i64().unwrap_or(0);
-        let is_active = id == active;
-        // The same bar the list marks its selection with, for the same meaning.
-        let marker = if is_active { "▌" } else { " " };
-        let name = Style::default().fg(if is_active { p.text } else { p.sub });
-        out.push(Line::from(vec![
-            Span::styled(marker.to_string(), Style::default().fg(p.accent)),
-            Span::styled(" ● ", Style::default().fg(state_color(theme, status))),
-            Span::styled(
-                clip(label, (width as usize).saturating_sub(12)),
-                if is_active {
-                    name.add_modifier(Modifier::BOLD)
-                } else {
-                    name
-                },
-            ),
-            Span::styled(format!("  {panes}p"), Style::default().fg(p.sub)),
-        ]));
+    let mut seen = HashSet::new();
+    let mut dirs: Vec<&str> = Vec::new();
+    for pane in panes.iter().copied() {
+        if let Some(dir) = pane_cwd(pane) {
+            if seen.insert(dir) {
+                dirs.push(dir);
+            }
+        }
     }
-    if out.is_empty() {
-        out.push(note("(no tabs)", p));
+    if dirs.is_empty() {
+        return Vec::new();
+    }
+
+    // A name column so the branches line up, capped near half the pane width.
+    let cap = (width as usize / 2).max(12);
+    let name_col = dirs
+        .iter()
+        .map(|d| basename(d).chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(cap);
+
+    let mut out = Vec::new();
+    for dir in dirs {
+        let name = clip(basename(dir), name_col);
+        // Detached HEAD has no symbolic ref; fall back to the short sha.
+        let branch = git(runner, dir, &["symbolic-ref", "--short", "HEAD"])
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                git(runner, dir, &["rev-parse", "--short", "HEAD"]).filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| "—".into());
+        let dirty = git(runner, dir, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled(format!("{name:<name_col$}"), Style::default().fg(p.text)),
+            Span::raw("  "),
+            Span::styled(branch, Style::default().fg(p.sub)),
+        ];
+        if dirty {
+            spans.push(Span::styled(
+                " ✎".to_string(),
+                Style::default().fg(theme.or("yellow", Color::Yellow)),
+            ));
+        }
+        out.push(clip_line(Line::from(spans), width as usize));
     }
     out
 }
@@ -674,15 +824,17 @@ mod tests {
     }
 
     #[test]
-    fn workspace_card_lists_only_its_own_tabs() {
-        let get = r#"{"result":{"workspace":{"label":"work","agent_status":"idle","number":2,"pane_count":3,"focused":true,"active_tab_id":"tab-1"}}}"#;
-        let tabs = r#"{"result":{"tabs":[
-            {"tab_id":"tab-1","workspace_id":"ws-1","label":"editor","agent_status":"idle","pane_count":2},
-            {"tab_id":"tab-9","workspace_id":"ws-OTHER","label":"elsewhere","agent_status":"idle","pane_count":1}
+    fn workspace_card_shows_agents_and_repos_for_its_own_panes() {
+        let get = r#"{"result":{"workspace":{"label":"work","agent_status":"blocked","number":2,"pane_count":2,"tab_count":1,"focused":true}}}"#;
+        let panes = r#"{"result":{"panes":[
+            {"workspace_id":"ws-1","agent":"claude","agent_status":"blocked","terminal_title_stripped":"Improve preview UI","cwd":"/tmp/herdr-ghq","focused":true},
+            {"workspace_id":"ws-OTHER","agent":"codex","agent_status":"idle","terminal_title_stripped":"elsewhere entirely","cwd":"/tmp/other-repo"}
         ]}}"#;
         let runner = MockRunner::new()
             .on("workspace get", get)
-            .on("tab list", tabs);
+            .on("pane list", panes)
+            .on("symbolic-ref", "main")
+            .on("status --porcelain", "");
         let entry = Entry {
             kind: Kind::Workspace,
             id: "ws-1".into(),
@@ -701,11 +853,17 @@ mod tests {
             &ink(),
             &Theme::default(),
         ));
-        assert!(out.contains("editor"), "{out}");
+        // Its own pane's agent, task, repo, and branch all surface.
+        assert!(out.contains("claude"), "{out}");
+        assert!(out.contains("Improve preview UI"), "{out}");
+        assert!(out.contains("herdr-ghq"), "{out}");
+        assert!(out.contains("main"), "{out}");
+        // A pane from another workspace never leaks in.
         assert!(
-            !out.contains("elsewhere"),
-            "a tab from another workspace leaked in: {out}"
+            !out.contains("codex"),
+            "an agent from another workspace leaked in: {out}"
         );
+        assert!(!out.contains("elsewhere entirely"), "{out}");
     }
 
     #[test]
