@@ -8,7 +8,9 @@ A [herdr](https://herdr.dev) plugin providing a unified switcher over three sour
 herdr **agents**, open herdr **workspaces**, and **ghq repos** — in one fuzzy picker. It is a
 Rust TUI (ratatui + nucleo), not an fzf wrapper. The switcher and the changelog viewer are
 modes of the same binary; the settings form is a floating overlay **inside** the switcher
-(⌥,), not a separate mode or pane; only the clone flow is still bash. The plugin needs no fzf.
+(⌥,), not a separate mode or pane; the git menu (⌥g) is likewise a floating overlay whose
+selection `exec`s a review tool. The clone flow and the review launcher (`bin/review.sh`, which
+runs `hunk`/`lazygit`/`$EDITOR`) are the only bash that reaches a terminal. The plugin needs no fzf.
 See `README.md` for user-facing keybindings and configuration.
 
 ## Commands
@@ -36,11 +38,12 @@ layout, keybindings, or herdr CLI calls need manual exercise in a real herdr ses
 
 **Two layers, joined by environment variables.** Every action starts in bash and may end in Rust:
 
-1. `bin/action.sh` is the single entrypoint for all seven manifest actions. It maps the action id
+1. `bin/action.sh` is the single entrypoint for all manifest actions. It maps the action id
    (via `HERDR_PLUGIN_ACTION_ID`) to a pane id (`picker` / `get` overlays, `changelog` popup) and
    its placement, captures the **origin pane id and cwd** before the pane steals focus, and
    passes them forward as
-   `GHQ_ORIGIN_PANE_ID` / `GHQ_ORIGIN_CWD` on `herdr plugin pane open`.
+   `GHQ_ORIGIN_PANE_ID` / `GHQ_ORIGIN_CWD` on `herdr plugin pane open`. The `git` action reuses the
+   `picker` pane with `GHQ_OPEN_GIT=1`, which opens the switcher straight into the git overlay.
 2. `bin/picker.sh` builds `target/release/herdr-ghq-switcher` on demand (first run only) and
    `exec`s it. It prepends common toolchain paths to `PATH` because herdr's server env lacks the
    user's shell additions.
@@ -79,7 +82,14 @@ must come from `herdr agent list`, `herdr workspace list`, or the captured origi
   agents and workspaces from herdr's JSON with `serde_json` and styles everything from
   `Theme`; shells out to `bin/preview.sh` only for the repo file tree, which arrives as
   ANSI already and passes through `ansi-to-tui`
-- `action.rs` — `Accept` enum → herdr CLI verbs
+- `git.rs` — the `⌥g` git overlay: the review menu (worktree/staged/branch/history/conflicts/
+  lazygit + `menu.conf` customs) drawn like `settings`, plus the IO-free helpers it opens with
+  (`detect_base_branch`, `load_commits`, `parse_menu_conf`). A selection resolves a `ReviewSpec`
+  the picker hands to `action::run_review`, which `exec`s `bin/review.sh`
+- `hunk.rs` — the `hunk-theme` mode: maps herdr `[theme.custom]` → a `~/.config/hunk/config.toml`
+  `[custom_theme]` (chrome only; diff bg stays hunk's `base`). Marker-guarded, so it never
+  overwrites a hand-written hunk config; `bin/review.sh` calls it before launching `hunk`
+- `action.rs` — `Accept` enum → herdr CLI verbs, plus `run_review` (`exec`s `bin/review.sh`)
 - `history.rs` — recency state at `$XDG_STATE_HOME/herdr-ghq/recent.tsv`, atomic write, cap 200
 - `settings.rs` — the `Settings` overlay: the `SETTINGS` form, its cycle rings, and `write_setting`,
   a flat-config writer that preserves comments and hand-added keys. Opened with `⌥,` and drawn as a
@@ -100,6 +110,13 @@ order so the list stays stable.
 
 ## Non-obvious constraints
 
+- **The git menu dispatches by `exec`-ing `review.sh` in the overlay pane, not by opening a new
+  herdr pane.** A review takes over the picker's own overlay pane the way the clone flow's
+  `Accept::Clone` `exec`s `get.sh` — so there is **no manifest pane for review**, and `hunk` quits
+  back to the origin when the overlay pane closes. `Git::on_key` returning `true` (a `chosen`
+  `ReviewSpec` set) is turned into `Flow::Accept(Accept::Git)`, which `main` intercepts *before*
+  `action::dispatch` and routes to `run_review`. `hunk`/`show`/`patch` are TUIs — the `hunk-review`
+  SKILL forbids running them non-interactively (they block); only ever launch them in a pane.
 - **The bash layer delegates open + config to the Rust binary; it no longer mirrors them.** The
   clone flow (`bin/get.sh`) opens a repo with `herdr-ghq-switcher open --target … --path … --origin …
   --label …` and reads settings with `herdr-ghq-switcher config get <key> [default]`, so the herdr

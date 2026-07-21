@@ -54,6 +54,17 @@ impl Theme {
         self.slots.get(key).copied()
     }
 
+    /// Build a theme from `slot = #rrggbb` pairs, for tests that want a specific
+    /// palette without writing a herdr config to disk.
+    #[cfg(test)]
+    pub fn from_slots(pairs: &[(&str, &str)]) -> Self {
+        let slots = pairs
+            .iter()
+            .filter_map(|(k, v)| parse_hex(v).map(|c| (k.to_string(), c)))
+            .collect();
+        Theme { slots }
+    }
+
     pub fn or(&self, key: &str, fallback: Color) -> Color {
         self.get(key).unwrap_or(fallback)
     }

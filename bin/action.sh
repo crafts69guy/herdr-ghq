@@ -12,8 +12,10 @@ ACTION_ID="${HERDR_PLUGIN_ACTION_ID:-}"
 # the Enter target the picker should force.
 entrypoint=""
 force_target=""
+open_git=""
 case "$ACTION_ID" in
   menu) entrypoint="picker" ;;
+  git) entrypoint="picker"; open_git="1" ;;
   open-workspace) entrypoint="picker"; force_target="workspace" ;;
   open-tab) entrypoint="picker"; force_target="tab" ;;
   open-split) entrypoint="picker"; force_target="split" ;;
@@ -45,6 +47,9 @@ if [[ -n "$pane_id" ]]; then
 fi
 if [[ -n "$force_target" ]]; then
   command+=(--env "GHQ_FORCE_TARGET=$force_target")
+fi
+if [[ -n "$open_git" ]]; then
+  command+=(--env "GHQ_OPEN_GIT=1")
 fi
 
 if ! "${command[@]}"; then

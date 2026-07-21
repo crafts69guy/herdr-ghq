@@ -81,6 +81,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.settings.show {
         crate::settings::draw(f, f.area(), &app.theme, app.title_color, &app.settings);
     }
+    if app.git.show {
+        crate::git::draw(f, f.area(), &app.theme, app.title_color, &app.git);
+    }
     if app.show_help {
         draw_help(f, app, f.area());
     }
@@ -414,11 +417,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             "workspace",
             t.or("mauve", Color::Magenta),
         ),
-        (
-            Action::Accept(Accept::Git),
-            "git",
-            t.or("peach", Color::Yellow),
-        ),
+        (Action::GitMenu, "git", t.or("peach", Color::Yellow)),
         (
             Action::Accept(Accept::Update),
             "update",
@@ -595,7 +594,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         &mut right,
         vec![
             opt(Action::Accept(Accept::Workspace), mauve, "To workspace"),
-            opt(Action::Accept(Accept::Git), peach, "Git actions"),
+            opt(Action::GitMenu, peach, "Git actions"),
             opt(Action::Accept(Accept::Update), teal, "Update repo"),
             opt(Action::Accept(Accept::Remove), red, "Remove"),
         ],

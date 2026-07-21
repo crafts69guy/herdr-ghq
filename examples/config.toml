@@ -44,6 +44,15 @@ open_after_clone = "true"
 # Popup background: auto follows the terminal; disabled paints an opaque panel.
 transparency = "auto"       # auto | enabled | disabled
 
+# Git menu (^g in Insert, ␣g in Normal, or the ghq.git action on prefix+g). Reviews
+# run in hunk (brew install hunk); staging opens lazygit. Leave base_branch blank to
+# auto-detect (main | master | origin/main | origin/master); set it to pin a base for
+# "review branch", e.g. "develop".
+base_branch = ""
+# Extra rows for the git menu live in a sibling file, menu.conf, one per line:
+#   key|icon|label|shell command      (e.g.  p||push|git push)
+# Blank lines and #-comments are skipped; a built-in mnemonic wins over a custom one.
+
 # Ask GitHub once a day whether a newer version is tagged, and show it in the
 # switcher's command bar. Never installs anything. The check runs in a detached
 # process, not in the TUI, and fails silently when offline. Set to "false" for no
@@ -68,6 +77,7 @@ notification_sound = "auto"          # auto | none | done | request
 #   bottom toggle_preview preview_down preview_up cycle_sort clear_query
 #   delete_word insert_mode normal_mode open clone update_plugin settings
 #   workspace tab split pane git update remove
+# (git opens the git menu overlay; it is ^g in Insert, ␣g in Normal.)
 #
 # Insert-mode defaults already free ^u/^w for readline (clear line / delete
 # word) and put the opens on ^t (tab) / ^v (split) / ^o (cd). Examples:

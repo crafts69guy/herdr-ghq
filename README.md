@@ -23,8 +23,9 @@ required.
 | **herdr** ≥ 0.7.4                                                        | the host multiplexer                                |
 | **[`ghq`](https://github.com/x-motemen/ghq)**                            | repository source                                   |
 | **[Rust / `cargo`](https://rustup.rs)**                                  | the TUI builds on demand the first time you open it |
+| _optional_ **[`hunk`](https://github.com/modem-dev/hunk)**               | the git menu's review pane (`brew install hunk`)    |
+| _optional_ **[`lazygit`](https://github.com/jesseduffield/lazygit)**     | staging/commit from the git menu                    |
 | _optional_ **[`eza`](https://github.com/eza-community/eza)**             | richer preview tree                                 |
-| _optional_ **[`git-hub`](https://github.com/crafts69guy/herdr-git-hub)** | the `ctrl-g` handoff                                |
 
 ## Install
 
@@ -70,7 +71,7 @@ command bar re-labels itself per mode. Press `i` or `/` in Normal to type again.
 | `↵` · `⌥↵`         | open · switch to the **clone** flow                                      |
 | `^j`/`^n` · `^k`/`^p` | down · up                                                             |
 | `^t` · `^v` · `^o` | open in a new **tab** · **split** · the **current pane** (`cd`)          |
-| `⌥w` · `^g` · `^r` · `^x` | to a **workspace** · **git** handoff · `ghq get -u` · **remove** |
+| `⌥w` · `^g` · `^r` · `^x` | to a **workspace** · the **git menu** · `ghq get -u` · **remove** |
 | `tab` / `⇧tab`     | cycle the group filter (All → Agents → Workspaces → Repos)               |
 | `⌥p` · `⌥s` · `⌥j`/`⌥k` | toggle preview · cycle sort · scroll the preview                    |
 | `^u` · `^w` · `⌫`  | clear the query · delete a word · delete a char (readline)               |
@@ -111,10 +112,31 @@ Bind any of these the same way as `ghq.menu`:
 | Action                                                   | Does                                                           |
 | -------------------------------------------------------- | -------------------------------------------------------------- |
 | `ghq.menu`                                               | the switcher                                                   |
+| `ghq.git`                                                | the git menu for the current repo (bind to `prefix+g`)         |
 | `ghq.get`                                                | the clone flow                                                 |
 | `ghq.changelog`                                          | what changed, with your installed version marked               |
 | `ghq.update-plugin`                                      | install a newer version (refuses to touch a `link`ed checkout) |
 | `ghq.open-workspace` · `ghq.open-tab` · `ghq.open-split` | the switcher with `enter`'s repo target forced                 |
+
+## Git menu
+
+`^g` (Insert) or `␣g` (Normal) opens a git menu **overlay** over the switcher — the floating-card
+shape of `⌥c`/`⌥,` — acting on the highlighted repo (or, via the `ghq.git` action on `prefix+g`,
+the pane you launched from). Walk it with `↑`/`↓`, `enter` runs the row, a mnemonic letter runs it
+directly, `esc` closes.
+
+| Row                   | Runs                                                                 |
+| --------------------- | ------------------------------------------------------------------- |
+| review **worktree**   | `hunk diff`                                                          |
+| review **staged**     | `hunk diff --staged`                                                 |
+| review **branch**     | `hunk diff <base>` — base auto-detected, or pinned via `base_branch` |
+| review **history**    | a `git log` list → `hunk show <commit>`                             |
+| **resolve conflicts** | review the unmerged diff in `hunk`, then open `$EDITOR` on the files |
+| **lazygit**           | stage / commit / push (shown only when `lazygit` is installed)       |
+
+Reviews open in [`hunk`](https://github.com/modem-dev/hunk) (`brew install hunk`), themed from your
+herdr `[theme.custom]`. Add your own rows in `menu.conf` (`key|icon|label|shell command`) beside
+`config.toml`.
 
 ## Configuration
 
@@ -137,6 +159,7 @@ Every key is documented in `examples/config.toml`. The ones you're most likely t
 | `label`                                 | workspace/tab label: `repo` · `owner-repo` · `path`                         |
 | `preview` / `preview_readme`            | the preview pane                                                            |
 | `clone_source`                          | seed the clone prompt from the `clipboard` (default) or start blank         |
+| `base_branch`                           | base for the git menu's branch review (blank = auto-detect)                 |
 | `split_direction` / `split_ratio`       | geometry for split targets                                                  |
 | `update_check`                          | ask GitHub once a day whether a newer version is tagged (`true` by default) |
 | `notifications` / `notification_position` | herdr toasts, and which corner they land in                               |

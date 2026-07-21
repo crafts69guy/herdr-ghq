@@ -196,6 +196,13 @@ const SETTINGS: &[Setting] = &[
         hint: "toast sound: auto per-event, or force one",
         cycle: Cycle::Ring(&["auto", "none", "done", "request"]),
     },
+    Setting {
+        group: "Git",
+        key: "base_branch",
+        default: "",
+        hint: "base for review branch (blank = auto-detect)",
+        cycle: Cycle::Prompt,
+    },
 ];
 
 /// The next value in a ring. An unknown current value restarts at the first.
@@ -395,7 +402,7 @@ impl Settings {
 /// order within each column, so navigating down walks the left column top-to-bottom
 /// and then continues into the right.
 const LEFT_GROUPS: &[&str] = &["Open", "Sources", "Keys", "Preview"];
-const RIGHT_GROUPS: &[&str] = &["Appearance", "Clone", "Updates", "Notifications"];
+const RIGHT_GROUPS: &[&str] = &["Appearance", "Clone", "Git", "Updates", "Notifications"];
 
 const NAME_W: usize = 21; // widest key ("notification_position")
 const PILL_W: usize = 12; // widest value ("bottom-right")

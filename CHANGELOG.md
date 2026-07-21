@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The git workflow is built in now — the separate `git-hub` plugin is folded into the
+  switcher.** `^g` (Insert) or `␣g` (Normal) opens a git menu **overlay** over the list — the
+  same floating-card shape as `⌥c`/`⌥,` — for the highlighted repo (or the pane you launched
+  from). From it: review the **worktree**, **staged** changes, a **branch** (against an
+  auto-detected `main`/`master`/`origin/*` base, or a pinned `base_branch`), or pick a commit
+  from **history**; **resolve conflicts**; or drop into **lazygit** to stage. Reviews open in
+  [`hunk`](https://github.com/modem-dev/hunk), a review-first terminal diff viewer, themed from
+  your herdr `[theme.custom]`. `prefix+g` binds to the new `ghq.git` action to open the menu
+  directly. Custom rows still come from `menu.conf` (`key|icon|label|command`).
+
 - **Notifications can play a sound now.** A new `notification_sound` setting (`⌥,` →
   Notifications, or the config key) picks the toast sound: `auto` (default) fits the sound to
   the event — a `done` chime when a clone or self-update succeeds, a `request` tone when a
@@ -37,6 +47,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The standalone `ghq.settings` herdr action (and its pane) is gone: settings lives only in the
   switcher now, the way `remove` always has. Reach it with `⌥,`, the `settings` command-bar
   pill, or `?` → Settings.
+
+- The cross-plugin `git-hub` handoff (`^g` used to open a tab and invoke `git-hub.menu`) is gone
+  — the git menu is served in-process now. **Migrating:** the `git-hub` plugin is retired;
+  `herdr plugin uninstall git-hub`, move `prefix+g` to the new `ghq.git` action, and install
+  `hunk` (`brew install hunk`, or `npm i -g hunkdiff`) for the review pane. `nvim`/`codediff.nvim`
+  are no longer required.
 
 ## [0.7.0] - 2026-07-20
 

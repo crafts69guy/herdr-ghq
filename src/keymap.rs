@@ -93,6 +93,7 @@ pub enum Action {
     Help,
     Changelog,
     Settings,
+    GitMenu,
     NextGroup,
     PrevGroup,
     Down,
@@ -150,7 +151,7 @@ const NAMES: &[(&str, Action)] = &[
     ("tab", Action::Accept(AcceptKind::Tab)),
     ("split", Action::Accept(AcceptKind::Split)),
     ("pane", Action::Accept(AcceptKind::Pane)),
-    ("git", Action::Accept(AcceptKind::Git)),
+    ("git", Action::GitMenu),
     ("update", Action::Accept(AcceptKind::Update)),
     ("remove", Action::Accept(AcceptKind::Remove)),
 ];
@@ -294,7 +295,7 @@ fn default_insert() -> Vec<(Chord, Action)> {
         (ctrl(Key::Char('v')), Accept(AcceptKind::Split)),
         (ctrl(Key::Char('o')), Accept(AcceptKind::Pane)),
         (alt(Key::Char('w')), Accept(AcceptKind::Workspace)),
-        (ctrl(Key::Char('g')), Accept(AcceptKind::Git)),
+        (ctrl(Key::Char('g')), GitMenu),
         (ctrl(Key::Char('r')), Accept(AcceptKind::Update)),
         (ctrl(Key::Char('x')), Accept(AcceptKind::Remove)),
         (alt(Key::Char('p')), TogglePreview),
@@ -353,7 +354,7 @@ fn default_normal() -> Vec<(Chord, Action)> {
 fn default_leader() -> Vec<(Chord, Action)> {
     use Action::*;
     vec![
-        (chord(Key::Char('g')), Accept(AcceptKind::Git)),
+        (chord(Key::Char('g')), GitMenu),
         (chord(Key::Char('u')), Accept(AcceptKind::Update)),
         (chord(Key::Char('x')), Accept(AcceptKind::Remove)),
         (chord(Key::Char('c')), Accept(AcceptKind::Clone)),
@@ -519,15 +520,14 @@ mod tests {
             km.action(Mode::Normal, chord(Key::Char('t'))),
             Some(Action::Accept(AcceptKind::Tab))
         );
-        // git lives behind the leader, not on a bare Normal key.
+        // the git menu lives behind the leader, not on a bare Normal key.
         assert_eq!(
             km.leader_action(chord(Key::Char('g'))),
-            Some(Action::Accept(AcceptKind::Git))
+            Some(Action::GitMenu)
         );
         // …and its label reads as the two-key sequence.
         assert_eq!(
-            km.label_for(Mode::Normal, Action::Accept(AcceptKind::Git))
-                .as_deref(),
+            km.label_for(Mode::Normal, Action::GitMenu).as_deref(),
             Some("␣ g")
         );
     }

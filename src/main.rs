@@ -4,7 +4,9 @@
 mod action;
 mod changelog;
 mod data;
+mod git;
 mod history;
+mod hunk;
 mod keymap;
 mod markdown;
 mod preview;
@@ -36,6 +38,7 @@ use ratatui::widgets::ListState;
 
 use action::Accept;
 use data::{Config, Entry, GroupFilter, Kind, SortMode, Theme};
+use runner::CommandRunner;
 
 /// The searchable model: the entries, the query and its result, and the two
 /// orderings (group filter + sort) applied to the resting list. Everything here
@@ -139,6 +142,8 @@ pub struct App {
     pub changelog: ChangelogState,
     /// The settings form, drawn as a floating overlay when `settings.show`.
     pub settings: settings::Settings,
+    /// The git menu, drawn as a floating overlay when `git.show`.
+    pub git: git::Git,
     pub zones: HitZones,
 }
 
@@ -410,6 +415,7 @@ impl App {
             preview,
             changelog: ChangelogState::new(),
             settings,
+            git: git::Git::new(),
             zones: HitZones::new(),
         }
     }
@@ -508,6 +514,11 @@ impl App {
         // keys — the pointer is not used to pick a row.
         if self.settings.show {
             self.settings.show = false;
+            return Flow::Continue;
+        }
+        // The git overlay is modal too: a click dismisses it, no row picking.
+        if self.git.show {
+            self.git.show = false;
             return Flow::Continue;
         }
         // The command bar: one row, so the x span is the whole test. A pill runs
@@ -614,6 +625,57 @@ fn delete_word(q: &mut String) {
     }
 }
 
+/// Open the git overlay for the repo the verbs should act on. `force_origin` uses
+/// the origin pane's cwd (the `prefix+g` entry point, where there is no meaningful
+/// selection); otherwise the selected repo/agent's dir wins, falling back to the
+/// origin cwd. Base-branch detection and the commit list shell out here, once, so
+/// `Git::on_key` stays IO-free.
+fn open_git(app: &mut App, force_origin: bool) {
+    let runner = runner::SystemRunner;
+    let origin_cwd = env::var("GHQ_ORIGIN_CWD").ok().filter(|s| !s.is_empty());
+
+    let selected = app.picker.selected_entry();
+    let (cwd, label) = if force_origin {
+        (
+            origin_cwd.clone().unwrap_or_else(|| ".".into()),
+            selected.map(|e| e.label.clone()).unwrap_or_default(),
+        )
+    } else {
+        let dir = selected.and_then(|e| e.dir.clone());
+        let label = selected.map(|e| e.label.clone()).unwrap_or_default();
+        (
+            dir.or(origin_cwd.clone()).unwrap_or_else(|| ".".into()),
+            label,
+        )
+    };
+    let label = if label.is_empty() {
+        std::path::Path::new(&cwd)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "repo".into())
+    } else {
+        label
+    };
+
+    let base = git::detect_base_branch(&runner, &cwd, &app.cfg.get("base_branch", ""));
+    let commits = git::load_commits(&runner, &cwd, 50);
+    let has_lazygit = runner.ok("sh", &["-c", "command -v lazygit >/dev/null 2>&1"]);
+    let customs = read_menu_conf();
+    app.git
+        .open(cwd, label, base, commits, has_lazygit, customs);
+}
+
+/// Read the `menu.conf` custom rows from the plugin's config dir, if any.
+fn read_menu_conf() -> Vec<git::Custom> {
+    let dir = env::var("HERDR_PLUGIN_CONFIG_DIR").unwrap_or_default();
+    if dir.is_empty() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(std::path::Path::new(&dir).join("menu.conf"))
+        .map(|t| git::parse_menu_conf(&t))
+        .unwrap_or_default()
+}
+
 /// Run a resolved [`keymap::Action`] against the app.
 fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
     use keymap::Action;
@@ -622,6 +684,7 @@ fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
         Action::Help => app.show_help = true,
         Action::Changelog => app.changelog.open(),
         Action::Settings => app.settings.open(),
+        Action::GitMenu => open_git(app, false),
         Action::NextGroup => app.picker.cycle_group(1),
         Action::PrevGroup => app.picker.cycle_group(-1),
         Action::Down => app.picker.move_sel(1),
@@ -661,6 +724,19 @@ fn apply_action(app: &mut App, action: keymap::Action) -> Flow {
 
 fn handle_key(app: &mut App, k: crossterm::event::KeyEvent) -> Flow {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+
+    // The git overlay owns navigation and Enter while open. `on_key` returns true once
+    // it has resolved a review command (`git.chosen` set, overlay closed): break the
+    // loop with an accept so the picker `exec`s `review.sh`. `^c` still quits.
+    if app.git.show {
+        if ctrl && matches!(k.code, KeyCode::Char('c')) {
+            return Flow::Quit;
+        }
+        if app.git.on_key(k) {
+            return Flow::Accept(Accept::Git);
+        }
+        return Flow::Continue;
+    }
 
     // The settings overlay is a form: while open it owns navigation, Enter (cycle),
     // and the in-place split_ratio edit, so route every key to it. `esc`/`q` close it
@@ -903,6 +979,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("--changelog") => return changelog::main(),
         Some("--update-check") => return update::main(),
+        Some("hunk-theme") => return hunk::main(),
         Some("open") => return cli_open(&args[1..]),
         Some("config") => return cli_config(&args[1..]),
         _ => {}
@@ -938,12 +1015,31 @@ fn main() -> Result<()> {
     // `root` is not carried into the App: repo entries already hold their absolute
     // `dir`, which is the only thing the preview and the actions ever needed it for.
     let mut app = App::new(entries, theme, cfg, script_dir.clone());
+    // `prefix+g` (the `ghq.git` action) launches us with this set: open straight into
+    // the git overlay for the origin pane's repo, skipping the switcher list.
+    if env::var("GHQ_OPEN_GIT").is_ok_and(|v| !v.is_empty()) {
+        open_git(&mut app, true);
+    }
     let mut terminal = init_terminal();
     let outcome = run(&mut terminal, &mut app);
     restore_terminal();
 
     if let Some((entry, accept)) = outcome? {
         let id = entry.as_ref().map(|e| e.id.clone());
+
+        // Git review is its own dispatch: the overlay already resolved which repo /
+        // branch / commit, so `exec` `review.sh` with it (replacing this process in the
+        // overlay pane, like the clone flow). Record recency first — exec never returns.
+        if accept == Accept::Git {
+            if let Some(spec) = app.git.chosen.take() {
+                if let Some(id) = &id {
+                    history::touch(id);
+                }
+                action::run_review(&spec, &script_dir)?;
+            }
+            return Ok(());
+        }
+
         // Resolve where Enter lands a repo from the (possibly just-applied) config, so a
         // `default_target` change made in the settings overlay is honoured this session.
         let default_target = action::resolve_default_target(
@@ -966,11 +1062,10 @@ fn main() -> Result<()> {
                 | Accept::Workspace
                 | Accept::Tab
                 | Accept::Split
-                | Accept::Pane
-                | Accept::Git => history::touch(&id),
+                | Accept::Pane => history::touch(&id),
                 Accept::Remove => history::forget(&id),
-                // Clone / UpdatePlugin exec away; none touch recency.
-                Accept::Update | Accept::Clone | Accept::UpdatePlugin => {}
+                // Git is handled and returned above; Clone / UpdatePlugin exec away.
+                Accept::Git | Accept::Update | Accept::Clone | Accept::UpdatePlugin => {}
             }
         }
     }

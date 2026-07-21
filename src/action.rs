@@ -9,6 +9,7 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 
 use crate::data::{Config, Entry, Kind};
+use crate::git::ReviewSpec;
 use crate::runner::CommandRunner;
 
 /// The targets `open_repo` understands.
@@ -98,13 +99,11 @@ pub fn dispatch(
                 Accept::Tab => open_repo(runner, "tab", &dir, origin_pane, &e.label, cfg),
                 Accept::Split => open_repo(runner, "split", &dir, origin_pane, &e.label, cfg),
                 Accept::Pane => open_repo(runner, "pane", &dir, origin_pane, &e.label, cfg),
-                Accept::Git => {
-                    open_repo(runner, "tab", &dir, origin_pane, &e.label, cfg)?;
-                    git_handoff(runner, &e.label)
-                }
                 Accept::Update => update(runner, &e.id, &e.label),
                 Accept::Remove => remove(runner, &dir, &e.label),
-                Accept::Clone | Accept::UpdatePlugin => unreachable!(),
+                // Git review is intercepted in `main` and `exec`s `review.sh`; a
+                // clone/update-plugin `exec`s its own script. None reach here.
+                Accept::Git | Accept::Clone | Accept::UpdatePlugin => unreachable!(),
             }
         }
     }
@@ -211,19 +210,20 @@ fn focus_agent(runner: &dyn CommandRunner, id: &str) -> Result<()> {
     herdr(runner, &["agent", "focus", id])
 }
 
-fn git_handoff(runner: &dyn CommandRunner, label: &str) -> Result<()> {
-    let installed = runner
-        .capture("herdr", &["plugin", "list"])
-        .is_some_and(|o| o.contains("- git-hub "));
-    if installed {
-        let _ = herdr(
-            runner,
-            &["plugin", "action", "invoke", "menu", "--plugin", "git-hub"],
-        );
-    } else {
-        eprintln!("git-hub is not installed — opened {label} in a new tab.");
-    }
-    Ok(())
+/// Hand the whole terminal to `bin/review.sh` with the git overlay's resolved
+/// choice as environment, replacing this process in the overlay pane the way the
+/// clone flow `exec`s `get.sh`. `review.sh` maps `REVIEW_MODE` to the tool
+/// (`hunk` review, `lazygit` staging, `$EDITOR` conflicts, or a custom command).
+pub fn run_review(spec: &ReviewSpec, script_dir: &str) -> Result<()> {
+    let err = Command::new("bash")
+        .arg(format!("{script_dir}/review.sh"))
+        .env("REVIEW_MODE", &spec.mode)
+        .env("REVIEW_CWD", &spec.cwd)
+        .env("REVIEW_ARG", &spec.arg)
+        .env("REVIEW_CUSTOM", &spec.custom)
+        .env("REVIEW_LABEL", &spec.label)
+        .exec();
+    Err(anyhow!("failed to exec review.sh: {err}"))
 }
 
 fn update(runner: &dyn CommandRunner, rel: &str, label: &str) -> Result<()> {

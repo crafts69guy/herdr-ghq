@@ -43,9 +43,13 @@ assert_rooted_pane_command update-plugin.sh
 
 # Every declared action dispatches through bin/action.sh. Settings is deliberately
 # absent: it is an in-picker overlay (⌥,), not a herdr action.
-for action in menu get changelog update-plugin open-workspace open-tab open-split; do
+for action in menu git get changelog update-plugin open-workspace open-tab open-split; do
   grep -Fq "id = \"$action\"" "$MANIFEST" || fail "action '$action' is not declared"
 done
+
+# The git action opens the picker straight into the git overlay via GHQ_OPEN_GIT.
+grep -Fq 'GHQ_OPEN_GIT' "$ROOT/bin/action.sh" ||
+  fail "bin/action.sh must pass GHQ_OPEN_GIT for the git action"
 
 # The pane script must resolve from an unrelated working directory.
 foreign_cwd="$(mktemp -d)"

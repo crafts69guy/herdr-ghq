@@ -48,6 +48,16 @@ ensure_built() {
   printf '%s\n' "$bin"
 }
 
+# Guard the review viewer, then refresh its themed chrome. hunk is the read-only
+# review TUI bin/review.sh launches; it is a separate (Node) dependency, so fail
+# with a clear install hint rather than a bare "command not found". The theme
+# regeneration is best-effort — hunk falls back to its own theme.
+ensure_hunk() {
+  command -v hunk >/dev/null 2>&1 ||
+    die "hunk is required for review — brew install hunk (or npm i -g hunkdiff)." "hunk not found on PATH"
+  "$(ensure_built)" hunk-theme >/dev/null 2>&1 || true
+}
+
 # Read a scalar from the plugin's intentionally flat config.toml. Quoted strings,
 # booleans, and bare values are supported; nested TOML is deliberately out of scope.
 toml_get() {

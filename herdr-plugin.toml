@@ -2,13 +2,20 @@ id = "ghq"
 name = "Ghq"
 version = "0.7.0"
 min_herdr_version = "0.7.4"
-description = "A unified herdr switcher: fuzzy-jump across running agents, open workspaces, and ghq repositories in one themed picker — open repos in a new workspace/tab/split/pane, plus clone, update, remove, and a git-hub handoff."
+description = "A unified herdr switcher: fuzzy-jump across running agents, open workspaces, and ghq repositories in one themed picker — open repos in a new workspace/tab/split/pane, plus clone, update, remove, and a built-in git menu (hunk review + lazygit)."
 platforms = ["macos", "linux"]
 
 [[actions]]
 id = "menu"
 title = "Project Switcher"
 description = "Open the switcher over running agents, open workspaces, and ghq repositories."
+contexts = ["global", "pane"]
+command = ["bash", "bin/action.sh"]
+
+[[actions]]
+id = "git"
+title = "Git Menu"
+description = "Open the git menu for the current repo: review the worktree, a branch, or history with hunk, resolve conflicts, or stage with lazygit."
 contexts = ["global", "pane"]
 command = ["bash", "bin/action.sh"]
 
