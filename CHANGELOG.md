@@ -22,6 +22,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   installs fetch a checksummed native binary for macOS/Linux on arm64/x86_64, so first open no
   longer waits on Cargo; offline and linked checkouts still fall back to a local build, with
   the same cat keeping the pane responsive. `esc` or `ctrl-c` cancels either loading stage.
+- **Launching a `⌥g` review now shows the same typing cat while it opens.** A hunk review used to
+  hand the pane a frozen screen while `hunk diff` walked a large repository; the review launcher
+  now plays a short branded pre-roll that animates the cat (Kitty frames or the pixel-art fallback)
+  while it warms the exact diff hunk is about to read, so the review opens onto the splash instead
+  of a stall and hunk itself starts faster off the warmed cache. The cat stays up until the warm-up
+  finishes (a 420 ms floor keeps it visible on an already-warm repo, a 5 s cap keeps a pathological
+  one from stalling); `esc`, `enter`, or `ctrl-c` skips straight to the tool. The pre-roll hands off
+  without a blank flash: it freezes a static “Opening review…” frame and leaves the screen in place
+  for hunk to paint straight over, rather than tearing the terminal down between the two. Only hunk
+  reviews get it — `lazygit` and custom `menu.conf` commands bring their own startup.
 - A **Worktrees** tab now lists linked Git worktrees across every ghq repository without
   duplicating the main checkout already shown under Repos. Worktrees open in a workspace,
   tab, split, or pane and use the built-in Git menu at their own path; repo-only update and

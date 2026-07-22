@@ -19,6 +19,16 @@ cwd="${REVIEW_CWD:-.}"
 arg="${REVIEW_ARG:-}"
 custom="${REVIEW_CUSTOM:-}"
 
+# Branded pre-roll before a hunk review: the switcher animates the same Kitty cat
+# the picker starts with while it warms the diff's cache, so a slow `hunk diff` on
+# a large repo opens onto the splash instead of a frozen pane. Best effort — it
+# reads REVIEW_MODE/REVIEW_ARG/REVIEW_CWD from the inherited env, and a missing or
+# failing binary must never block the review. Not used for lazygit/custom, which
+# bring their own startup.
+review_preroll() {
+  "$(ensure_built)" review-splash || true
+}
+
 [[ -d "$cwd" ]] || die "Repository path no longer exists." "review cwd missing: $cwd"
 cd -- "$cwd"
 
@@ -49,12 +59,14 @@ if [[ "$mode" == "conflicts" ]]; then
     exit 0
   fi
   ensure_hunk
+  review_preroll
   hunk diff -- "${files[@]}" || true
   exec "${EDITOR:-vi}" "${files[@]}"
 fi
 
 # Everything else is a hunk review.
 ensure_hunk
+review_preroll
 case "$mode" in
   worktree) exec hunk diff ;;
   staged) exec hunk diff --staged ;;

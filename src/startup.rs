@@ -76,8 +76,11 @@ impl State {
         }
     }
 
-    #[cfg(test)]
-    pub fn waiting(status: &str) -> Self {
+    /// A splash with no data worker behind it. The review pre-roll
+    /// (`main::review_splash`) animates the same cat while it warms the diff's
+    /// cache, so `poll` is never called and the channel stays disconnected —
+    /// `frame()`/`status` and `begin_display` are all it drives.
+    pub fn animation(status: &str) -> Self {
         let (_tx, rx) = mpsc::channel();
         State {
             rx,
@@ -86,6 +89,11 @@ impl State {
             ready: None,
             status: status.into(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn waiting(status: &str) -> Self {
+        Self::animation(status)
     }
 
     #[cfg(test)]

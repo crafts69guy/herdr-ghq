@@ -1109,6 +1109,147 @@ fn cli_config(args: &[String]) -> Result<()> {
     }
 }
 
+/// The `git` read hunk is about to perform for a review mode, mirroring
+/// `bin/review.sh`'s dispatch. The pre-roll runs it only to warm the OS/object
+/// cache; `None` (unknown or arg-less history) means "just show the floor".
+fn review_warm_args(mode: &str, arg: &str) -> Option<Vec<String>> {
+    match mode {
+        // A conflict review opens `hunk diff` on the unmerged files first.
+        "worktree" | "conflicts" => Some(vec!["diff".into()]),
+        "staged" => Some(vec!["diff".into(), "--staged".into()]),
+        "branch" if arg.is_empty() => Some(vec!["diff".into()]),
+        "branch" => Some(vec!["diff".into(), arg.into()]),
+        "history" if !arg.is_empty() => Some(vec!["show".into(), arg.into()]),
+        _ => None,
+    }
+}
+
+/// Long enough for the 140ms cat to advance through ~3 frames even when the
+/// cache is already warm, so the pre-roll never flashes a half-drawn image.
+const REVIEW_SPLASH_FLOOR: Duration = Duration::from_millis(420);
+/// A huge repository must not stall the review behind the splash: past this the
+/// pre-roll hands off to hunk regardless of the warm-up, still partly warmed.
+const REVIEW_SPLASH_CAP: Duration = Duration::from_millis(5000);
+/// Event-poll cadence; short enough to advance the 140ms animation smoothly.
+const REVIEW_SPLASH_TICK: Duration = Duration::from_millis(60);
+
+/// `herdr-ghq-switcher review-splash` — the branded pre-roll `bin/review.sh` plays
+/// before it execs hunk, so a slow `hunk diff` on a large repo opens onto the same
+/// Kitty cat the picker starts with instead of a frozen pane.
+///
+/// Unlike the picker splash there is no data worker to wait on, so the cat would
+/// otherwise be pure added latency. Instead it warms the exact diff hunk is about
+/// to read (a read-only `git diff`/`git show`, discarded) on a detached child and
+/// animates until that finishes — the OS page cache and git objects it touches are
+/// the same ones hunk reads, so the cat covers real work and hunk then opens fast.
+/// The floor keeps the animation visible on an already-warm repo; the cap keeps a
+/// pathological one from stalling. Esc/Enter/Ctrl-C skip. Best effort throughout:
+/// the review is dispatched by review.sh no matter how this returns.
+fn review_splash() -> Result<()> {
+    let cfg = Config::load();
+    let theme = Theme::load();
+    let title = theme
+        .resolve(&cfg.get("title_color", "peach"))
+        .unwrap_or_else(|| theme.or("accent", ratatui::style::Color::Cyan));
+    let mode = env::var("REVIEW_MODE").unwrap_or_default();
+    let arg = env::var("REVIEW_ARG").unwrap_or_default();
+    let cwd = env::var("REVIEW_CWD").unwrap_or_else(|_| ".".into());
+
+    // Warm the diff hunk will read. Read-only, output discarded; a spawn failure
+    // just means we fall back to the timed floor.
+    let mut warm = review_warm_args(&mode, &arg).and_then(|git_args| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(&git_args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+    });
+
+    let mut state = startup::State::animation("Preparing review");
+    let mut splash = graphics::Splash::new();
+    // ratatui::init claims the alt screen + hides the cursor; unlike the picker we
+    // never enable the wheel, so there is no MOUSE_ON/OFF pair to restore.
+    let mut terminal = ratatui::init();
+    state.begin_display();
+    let started = Instant::now();
+
+    let result = (|| -> Result<()> {
+        let mut last_frame = usize::MAX;
+        loop {
+            let size = terminal.size()?;
+            let area = Rect::new(0, 0, size.width, size.height);
+            let graphics_on = splash.can_show(area);
+            let frame = state.frame();
+            if frame != last_frame {
+                terminal.draw(|f| startup::draw(f, area, &theme, title, &state, graphics_on))?;
+                if graphics_on && !splash.show(area, frame) {
+                    // A broken proxy/terminal write disables graphics; fill the
+                    // empty image slot with the ASCII cat this frame.
+                    terminal.draw(|f| startup::draw(f, area, &theme, title, &state, false))?;
+                }
+                last_frame = frame;
+            }
+
+            let elapsed = started.elapsed();
+            // `is_none_or`: no warm-up child means the floor alone decides.
+            let warm_done = warm
+                .as_mut()
+                .is_none_or(|c| matches!(c.try_wait(), Ok(Some(_))));
+            if (warm_done && elapsed >= REVIEW_SPLASH_FLOOR) || elapsed >= REVIEW_SPLASH_CAP {
+                break;
+            }
+
+            if event::poll(REVIEW_SPLASH_TICK)? {
+                if let Event::Key(k) = event::read()? {
+                    if k.kind == KeyEventKind::Press {
+                        let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL)
+                            && matches!(k.code, KeyCode::Char('c'));
+                        if ctrl_c || matches!(k.code, KeyCode::Esc | KeyCode::Enter) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+
+    // Never leave a warm-up git competing with hunk if we broke on the cap or a
+    // skip; a child that already exited ignores the kill.
+    if let Some(mut child) = warm {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    // Hand off without a blank gap. The picker splash restores the terminal because
+    // the picker keeps drawing after it; here the very next thing is hunk, and the
+    // pause the user would otherwise see is hunk entering its own screen and rendering
+    // the diff — after this process is gone, so nothing could animate over it. So
+    // instead of tearing the screen down we clear only the Kitty image (it must not
+    // linger over hunk's cells) and freeze one static "Opening review…" cat frame,
+    // leaving the alternate screen up for hunk to paint straight over. Only raw mode
+    // and the cursor are restored, for the brief cooked-mode window before hunk grabs
+    // them back. hunk is a full-screen alt-screen diff pager, so the frozen frame
+    // shows only until its first paint. A splash error still gets the full restore.
+    splash.clear();
+    if result.is_ok() {
+        state.status = "Opening review".into();
+        if let Ok(size) = terminal.size() {
+            let area = Rect::new(0, 0, size.width, size.height);
+            let _ = terminal.draw(|f| startup::draw(f, area, &theme, title, &state, false));
+        }
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(io::stdout(), crossterm::cursor::Show);
+    } else {
+        ratatui::restore();
+    }
+    result
+}
+
 fn main() -> Result<()> {
     // One binary, many modes. bin/changelog.sh execs us with --changelog for the
     // standalone changelog pane; the clone flow execs `open`/`config` so the herdr
@@ -1123,6 +1264,7 @@ fn main() -> Result<()> {
         Some("--changelog") => return changelog::main(),
         Some("--update-check") => return update::main(),
         Some("hunk-theme") => return hunk::main(),
+        Some("review-splash") => return review_splash(),
         Some("open") => return cli_open(&args[1..]),
         Some("config") => return cli_config(&args[1..]),
         _ => {}
@@ -1334,6 +1476,30 @@ mod tests {
         let screen = rendered(&mut app, 120, 40);
         assert!(screen.contains("Scroll that pane"), "{screen}");
         assert!(screen.contains("Select or run it"), "{screen}");
+    }
+
+    #[test]
+    fn review_warm_args_mirror_the_hunk_dispatch() {
+        assert_eq!(review_warm_args("worktree", ""), Some(vec!["diff".into()]));
+        assert_eq!(review_warm_args("conflicts", ""), Some(vec!["diff".into()]));
+        assert_eq!(
+            review_warm_args("staged", ""),
+            Some(vec!["diff".into(), "--staged".into()])
+        );
+        assert_eq!(review_warm_args("branch", ""), Some(vec!["diff".into()]));
+        assert_eq!(
+            review_warm_args("branch", "main"),
+            Some(vec!["diff".into(), "main".into()])
+        );
+        assert_eq!(
+            review_warm_args("history", "abc123"),
+            Some(vec!["show".into(), "abc123".into()])
+        );
+        // A history entry with no sha and lazygit/custom modes warm nothing —
+        // the pre-roll then rides the timed floor alone.
+        assert_eq!(review_warm_args("history", ""), None);
+        assert_eq!(review_warm_args("lazygit", ""), None);
+        assert_eq!(review_warm_args("custom", ""), None);
     }
 
     #[test]
